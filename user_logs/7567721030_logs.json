@@ -3,26 +3,30 @@
     "totalPunishments": 2,
     "mutes": [
       {
+        "type": "mute",
         "active": true,
-        "issuedAt": "2026-04-19T15:18:28.049Z",
+        "issuedAt": "2026-04-19T15:18:28.052Z",
         "messageText": "Привет",
         "messageId": 2645,
         "reason": "",
         "adminId": 5794029276,
         "expiresAt": null,
         "removedAt": null,
-        "removedBy": null
+        "removedBy": null,
+        "chatId": -1001816593589
       },
       {
+        "type": "mute",
         "active": true,
-        "issuedAt": "2026-04-19T15:18:28.596Z",
+        "issuedAt": "2026-04-19T15:18:28.597Z",
         "messageText": "Привет",
         "messageId": 2645,
         "reason": "",
         "adminId": 5794029276,
         "expiresAt": null,
         "removedAt": null,
-        "removedBy": null
+        "removedBy": null,
+        "chatId": -1001816593589
       }
     ],
     "notes": [],
