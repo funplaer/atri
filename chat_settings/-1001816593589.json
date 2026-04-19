@@ -1,0 +1,7 @@
+{
+  "modchatID": "",
+  "commandCd": 5,
+  "WARN_EXPIRE": "14d",
+  "WARN_LIMIT": 3,
+  "WARN_PUNISHMENT": "mute 1M авто мут за варны"
+}
