@@ -1,31 +1,37 @@
 {
   "7567721030": {
-    "totalPunishments": 2,
+    "totalPunishments": 1,
     "mutes": [
       {
-        "active": true,
-        "issuedAt": "2026-04-19T15:18:28.049Z",
-        "messageText": "Привет",
-        "messageId": 2645,
-        "reason": "",
+        "active": false,
+        "issuedAt": "2026-05-05T15:08:26.823Z",
+        "messageText": null,
+        "messageId": null,
+        "reason": "true",
         "adminId": 5794029276,
-        "expiresAt": null,
-        "removedAt": null,
-        "removedBy": null
+        "expiresAt": "2026-05-05T15:09:26.825Z",
+        "removedAt": "2026-05-05T15:09:51.485Z",
+        "removedBy": "system"
+      }
+    ],
+    "notes": [
+      {
+        "active": false,
+        "text": "1",
+        "issuedAt": "2026-05-05T15:08:49.708Z",
+        "adminId": 5794029276,
+        "removedAt": "2026-05-05T15:09:55.919Z",
+        "removedBy": 5794029276
       },
       {
         "active": true,
-        "issuedAt": "2026-04-19T15:18:28.596Z",
-        "messageText": "Привет",
-        "messageId": 2645,
-        "reason": "",
+        "text": "2",
+        "issuedAt": "2026-05-05T15:09:01.382Z",
         "adminId": 5794029276,
-        "expiresAt": null,
         "removedAt": null,
         "removedBy": null
       }
     ],
-    "notes": [],
     "bans": []
   }
 }

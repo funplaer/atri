@@ -108,13 +108,7 @@ function loadJSON(file) {
 function saveJSON(file, data) {
     fs.writeFileSync(file, JSON.stringify(data, null, 2));
 }
-function loadLogs(chatId) {
-    return loadJSON(getChatLogFile(chatId));
-}
 
-function saveLogs(chatId, data) {
-    return saveJSON(getChatLogFile(chatId), data);
-}
 function getUser(logs, userId) {
     if (!logs[userId]) {
         logs[userId] = {
@@ -343,7 +337,7 @@ bot.onText(/\/mute(?:\s+(.+))?/, async (msg,match) => {
                                 text += ` по причине '${reason}'`;
                             }
 
-                            return bot.sendMessage(chatId, text, {
+                            bot.sendMessage(chatId, text, {
                                 parse_mode: 'HTML',
                                 reply_to_message_id: msg.message_id
                             });
@@ -352,7 +346,7 @@ bot.onText(/\/mute(?:\s+(.+))?/, async (msg,match) => {
 
                             userLog.totalPunishments++;
 
-                            userLog.mutes.push({
+                            const log = ({
                                 active: true,
                                 issuedAt: new Date().toISOString(),
                                 messageText: msg.reply_to_message ? msg.reply_to_message.text || null : null,
@@ -363,20 +357,22 @@ bot.onText(/\/mute(?:\s+(.+))?/, async (msg,match) => {
                                 removedAt: null,
                                 removedBy: null
                             });
-
+                            if (!userLog.mutes) userLog.mutes = [];
+                            userLog.mutes.push(log);
                             saveLogs(chatId, logs);
-                            pushGlobalLog(targetId, chatId, {
-                            type: 'mute',
-                            active: true,
-                            issuedAt: new Date().toISOString(),
-                            messageText: msg.reply_to_message ? msg.reply_to_message.text || null : null,
-                            messageId: msg.reply_to_message ? msg.reply_to_message.message_id : null,
-                            reason,
-                            adminId: msg.from.id,
-                            expiresAt: duration ? new Date(Date.now() + duration * 1000).toISOString() : null,
-                            removedAt: null,
-                            removedBy: null
-                        });
+
+                            
+                            const ulogs = loadUserLogs(targetId);
+                            const u = getUserGlobal(ulogs, targetId);
+
+                            u.totalPunishments++;
+
+                            u.mutes.push({
+                                ...log,
+                                chatId
+                            });
+
+                            saveUserLogs(targetId, ulogs);
                         } catch (err) {
                             bot.sendMessage(chatId, 'Простите, я не смогла запретить этому пользователю писать в чат. Я правда пыталась, но что-то пошло не так', { reply_to_message_id: msg.message_id})
                             return bot.sendSticker(chatId, 'CAACAgIAAxkBAAEW4xFp3TsFwtS0nT6OivaNRZQ8OmArcwACJVcAAtkTIUlsu94nV6R8wDsE', { reply_to_message_id: msg.message_id})
@@ -407,7 +403,7 @@ bot.onText(/\/unmute(?:\s+(.+))?/, async (msg, match) => {
             try {
                 const admins = await bot.getChatAdministrators(chatId);
                 const isAdmin = admins.some(admin => admin.user.id === userId);
-
+                let args = (match[1] || '').trim().split(/\s+/).filter(Boolean);
                 if (!isAdmin) {
                     return bot.sendMessage(chatId, 'Похоже вы не обадаете правми администратора в этой группе', {
                         reply_to_message_id: msg.message_id
@@ -445,7 +441,7 @@ bot.onText(/\/unmute(?:\s+(.+))?/, async (msg, match) => {
                 const target = await bot.getChatMember(chatId, targetId);
                 const targetName = target.user.first_name;
                 const mention = `<a href="tg://user?id=${targetId}">${targetName}</a>`;
-                return bot.sendMessage(chatId,
+                bot.sendMessage(chatId,
                     `Пользователь ${mention} снова может писать! С возвращением!`,
                     { parse_mode: 'HTML', reply_to_message_id: msg.message_id }
                 );
@@ -853,9 +849,9 @@ bot.onText(/\/unnote (\d+)(?:\s+(.+))?/, async (msg, match) => {
         try {
             const admins = await bot.getChatAdministrators(chatId);
             if (!admins.some(a => a.user.id === adminId)) return;
-
+            
             let targetId = null;
-
+            let args = (match[1] || '').trim().split(/\s+/);
             if (msg.reply_to_message) {
                     targetId = msg.reply_to_message.from.id;
                     userReply = true;
@@ -879,9 +875,15 @@ bot.onText(/\/unnote (\d+)(?:\s+(.+))?/, async (msg, match) => {
 
             const logs = loadLogs(chatId);
             const user = getUser(logs, targetId);
+            
 
+            if (isNaN(index) || index < 0) {
+                return bot.sendMessage(chatId, 'Я не смогла найти такую заметку у этого пользователя. Я проверила несколько раз, но такой заметки у него точно-точно нет', {
+                    reply_to_message_id: msg.message_id
+                });
+            }
             if (!user.notes[index]) {
-                return bot.sendMessage(chatId, 'Я не смогла найти такую заметку у этого пользователя. Я проверила несколько раз, но такой заметк у него точно-точно нет', { reply_to_message_id: msg.message_id});
+                return bot.sendMessage(chatId, 'Я не смогла найти такую заметку у этого пользователя. Я проверила несколько раз, но такой заметки у него точно-точно нет', { reply_to_message_id: msg.message_id});
             }
 
             const note = user.notes[index];
@@ -1021,21 +1023,30 @@ bot.onText(/\/user(?:\s+(.+))?/, async (msg, match) => {
             text += `\n<b>Заметки (${notes.length}):</b>\n`;
 
             for (const n of notes) {
-                text += `\n• Статус: ${n.active ? 'активна' : 'удалена'}\n`;
-                text += `• Текст заметки: ${n.text}\n`;
-                text += `• Дата выдачи: ${formatDateMSK(n.issuedAt)}\n`;
+            const realIndex = user.notes.indexOf(n) + 1;
 
-                if (showFull) {
-                    const admin = await getUserMention(chatId, n.adminId);
-                    text += `• Выдавший админ: ${admin}\n`;
+            text += `\n<b>#${realIndex}</b>\n`;
+            text += `• Статус: ${n.active ? 'активна' : 'удалена'}\n`;
+            text += `• Текст заметки: ${n.text}\n`;
+            text += `• Дата выдачи: ${formatDateMSK(n.issuedAt)}\n`;
 
-                    if (!n.active) {
-                        const removedBy = await getUserMention(chatId, n.removedBy);
-                        text += `• Дата удаления: ${formatDateMSK(n.removedAt)}\n`;
-                        text += `• Удаливший админ: ${removedBy}\n`;
-                    }
+            if (showFull) {
+                let adminText = n.adminId === 'system'
+                    ? 'system'
+                    : await getUserMention(chatId, n.adminId);
+
+                text += `• Выдавший админ: ${adminText}\n`;
+
+                if (!n.active) {
+                    let removedByText = n.removedBy === 'system'
+                        ? 'system'
+                        : await getUserMention(chatId, n.removedBy);
+
+                    text += `• Дата удаления: ${formatDateMSK(n.removedAt)}\n`;
+                    text += `• Удаливший админ: ${removedByText}\n`;
                 }
             }
+        }
 
             if (notes.length === 0) {
                 text += `нет данных\n`;
