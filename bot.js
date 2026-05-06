@@ -15,7 +15,7 @@ if (!fs.existsSync(USER_LOG_DIR)) fs.mkdirSync(USER_LOG_DIR);
 
 //настройки
 const modchatID = '';
-const commandCd = 5;
+const commandCd = 15;
 
 // кд команд
 var lastcommand = 0;
@@ -211,14 +211,16 @@ bot.onText(/\/start/, (msg) => {
 });
 bot.onText(/\/commands/, async (msg) => {
     const chatId = msg.chat.id;
-
-    if(lastcommand >= commandCd) {
+    if(msg.chat.type === 'private') {
+        return bot.sendMessage(chatId, 'Вот, что я умею: \n   <b>/user</b> — узнать информацию о себе \n   <b>/report</b> — сообщить о нарушителе в чате (ответом на его сообщение) \n   <b>/help</b> — создать запрос в службу поддержки бота', {parse_mode: 'HTML'})
+    }
+    const admins = await bot.getChatAdministrators(chatId);
+    const isAdmin = admins.some(admin => admin.user.id === userId);
+    if(lastcommand >= commandCd || isAdmin) {
                 lastcommand = 0;
         const userId = msg.from.id;
 
-        try {
-            const admins = await bot.getChatAdministrators(chatId);
-            const isAdmin = admins.some(admin => admin.user.id === userId);
+        try {            
             const text = 'Вот, что я умею: \n   <b>/settings</b> — открыть настройки чата, флаг -mc — отправить ответ в чат модерации (если настроен) \n   <b>/user</b> — узнать информацию о пользователе (ответом на его сообщение или вписав его Id после команды), флаг -f — узнать полную информацию о пользователе, флаг -mc — отправить ответ в чат модерации (если настроен) пример использования команды: /user 12345678910 -f -mc \n   <b>/note</b> — создать заметку о пользователе (ответом на сообщение или указав Id), пример использования команды: \note 12345678910 спамер, команда /unnote НОМЕР_ЗАМЕТКИ — удалить конкретную заметку о пользователе (ответом на сообщение или указав Id), номер заметки можно узнать в информации о пользователе \n   <b>/warn</b> — выдать пользователю предупреждение (ответом на его сообщение или указав его Id), можно указать причину предупреждения, флаг -d — бот удалит сообщение нарушителя (если команда написана ответом на него), флаг -i — предупреждение не исчезает со временем (если настроено время автоматического снятия предупреждений) пример использования команды: /warn 12345678910 Спам -d -i, команда /unwarn НОМЕР_ВАРНА (ответом на сообщение или указав Id) — снять конкретное предупреждение у пользователя, номер предупреждение можно посмотреть в полной информации о пользователе \n   <b>/mute</b> — запретить пользователю писать в чат (ответом на его сообщение или указав его Id), можно указать срок мута в минутах, часах, днях, месяцах буквами m,h,d,M соответственно (если время не указанно, то мут вечный), можно указать причину, флаг -d — бот удалит сообщение нарушителя (если команда написана ответом на него), пример использования команды: /mute 12345678910 5h Спам -d, команда /unwarn (ответом на сообщение или указав Id) — досрочно снять ограничения с пользователя \n   <b>/ban</b> — заблокировать пользователя в чате (ответом на его сообщение или указав его Id), можно указать срок бана в минутах, часах, днях, месяцах буквами m,h,d,M соответственно (если время не указанно, то бан вечный), можно указать причину, флаг -d — бот удалит сообщение нарушителя (если команда написана ответом на него), пример использования команды: /ban 12345678910 5h Спам -d, команда /unban (ответом на сообщение или указав Id) — досрочно разблокировать пользователя \n <b>/raidMode</b> —   включить режим активного антиспама и антирейда, подробнее можно узнать в настройках, команда /unRaidMode — отключить режим агрессивного антиспама и антирейда'
             if(!isAdmin) {
                 return bot.sendMessage(chatId, 'Вот, что я умею: \n   <b>/user</b> — узнать информацию о себе \n   <b>/report</b> — сообщить о нарушителе в чате (ответом на его сообщение) \n   <b>/help</b> — создать запрос в службу поддержки бота', {parse_mode: 'HTML', reply_to_message_id: msg.message_id})
@@ -238,10 +240,14 @@ bot.onText(/\/commands/, async (msg) => {
 bot.onText(/\/mute(?:\s+(.+))?/, async (msg,match) => {
     const chatId = msg.chat.id;
     const userId = msg.from.id;
-    if(lastcommand >= commandCd) {
+    if(msg.chat.type === 'private' || msg.chat.type === 'channel') {
+        return bot.sendMessage(chatId, 'Я могу сделать это только в группе')
+    }
+    const admins = await bot.getChatAdministrators(chatId);
+    const isAdmin = admins.some(admin => admin.user.id === userId);
+    if(lastcommand >= commandCd || isAdmin) {
         try {
-            const admins = await bot.getChatAdministrators(chatId);
-            const isAdmin = admins.some(admin => admin.user.id === userId);
+            
             if(msg.chat.type === 'private') {
                 return bot.sendMessage(chatId, 'Я могу сделать это только в группе', { reply_to_message_id: msg.message_id})
             } else {
@@ -396,13 +402,17 @@ bot.onText(/\/mute(?:\s+(.+))?/, async (msg,match) => {
 bot.onText(/\/unmute(?:\s+(.+))?/, async (msg, match) => {
     const chatId = msg.chat.id;
     const userId = msg.from.id;
-    if(lastcommand >= commandCd) {
+    if(msg.chat.type === 'private' || msg.chat.type === 'channel') {
+        return bot.sendMessage(chatId, 'Я могу сделать это только в группе')
+    }
+    const admins = await bot.getChatAdministrators(chatId);
+    const isAdmin = admins.some(admin => admin.user.id === userId);
+    if(lastcommand >= commandCd || isAdmin) {
         if(msg.chat.type === 'private') {
             return bot.sendMessage(chatId, 'Я могу сделать это только в группе', { reply_to_message_id: msg.message_id})
         } else {
             try {
-                const admins = await bot.getChatAdministrators(chatId);
-                const isAdmin = admins.some(admin => admin.user.id === userId);
+                
                 let args = (match[1] || '').trim().split(/\s+/).filter(Boolean);
                 if (!isAdmin) {
                     return bot.sendMessage(chatId, 'Похоже вы не обадаете правми администратора в этой группе', {
@@ -483,40 +493,39 @@ bot.onText(/\/unmute(?:\s+(.+))?/, async (msg, match) => {
 });
 bot.onText(/\/kickme/, async (msg) => {
     const chatId = msg.chat.id;
+    if(msg.chat.type === 'private' || msg.chat.type === 'channel') {
+        return bot.sendMessage(chatId, 'Я могу сделать это только в группе')
+    }
     const admins = await bot.getChatAdministrators(chatId);
     const userId = msg.from.id;
-    const isAdmin = admins.some(admin => admin.user.id === userId);
-    if(lastcommand >= commandCd) {
+    const isAdmin = admins.some(admin => admin.user.id === userId);    
         if(isAdmin) {
             return bot.sendMessage(chatId, 'От админства не так-то просто отделаться, страдай дальше', { reply_to_message_id: msg.message_id})
         } else {
-            try {
-                if(msg.chat.type === 'private') {
-                return bot.sendMessage(chatId, 'Я могу сделать это только в группе', { reply_to_message_id: msg.message_id})
-            } else {
+            try {                 
                 bot.banChatMember(chatId, msg.from.id)
                 bot.sendMessage(chatId, 'Пока-пока', { reply_to_message_id: msg.message_id})
-                bot.unbanChatMember(chatId, msg.from.id)
-            }
+                bot.unbanChatMember(chatId, msg.from.id)            
             } catch(e) {
                 console.error(e)
                 bot.sendMessage(chatId, 'Простите, я не смогла этого сделать. Я правда пыталась, но что-то пошло не так', { reply_to_message_id: msg.message_id})
                 return bot.sendSticker(chatId, 'CAACAgIAAxkBAAEW4xFp3TsFwtS0nT6OivaNRZQ8OmArcwACJVcAAtkTIUlsu94nV6R8wDsE', { reply_to_message_id: msg.message_id})
-        }
+            }
         }
         
-    }
+    
 });
 bot.onText(/\/ban(?:\s+(.+))?/, async (msg, match) => {
     const chatId = msg.chat.id;
     const adminId = msg.from.id;
-    if(lastcommand >= commandCd) {
-        if(msg.chat.type === 'private') {
-            return bot.sendMessage(chatId, 'Я могу сделать это только в группе', { reply_to_message_id: msg.message_id})
-        } else {
+    if(msg.chat.type === 'private' || msg.chat.type === 'channel') {
+        return bot.sendMessage(chatId, 'Я могу сделать это только в группе')
+    }
+    const admins = await bot.getChatAdministrators(chatId);
+    const isAdmin = admins.some(a => a.user.id === adminId);
+    if(lastcommand >= commandCd || isAdmin) {        
             try {
-                const admins = await bot.getChatAdministrators(chatId);
-                const isAdmin = admins.some(a => a.user.id === adminId);
+                
 
                 if (!isAdmin) {
                     return bot.sendMessage(chatId, 'Похоже вы не обладаете правами администратора в этой группе', {
@@ -658,117 +667,121 @@ bot.onText(/\/ban(?:\s+(.+))?/, async (msg, match) => {
                 return bot.sendSticker(chatId, 'CAACAgIAAxkBAAEW4xFp3TsFwtS0nT6OivaNRZQ8OmArcwACJVcAAtkTIUlsu94nV6R8wDsE', { reply_to_message_id: msg.message_id})
             }
         }
-    }       
+          
     lastcommand = 0;
 });
 bot.onText(/\/unban(?:\s+(.+))?/, async (msg, match) => {
     const chatId = msg.chat.id;
     const adminId = msg.from.id;
+    if(msg.chat.type === 'private' || msg.chat.type === 'channel') {
+        return bot.sendMessage(chatId, 'Я могу сделать это только в группе')
+    }
+    const admins = await bot.getChatAdministrators(chatId);
+    const isAdmin = admins.some(a => a.user.id === adminId);
+    if(lastcommand >= commandCd || isAdmin) {
+        try {        
+            if (!isAdmin) {
+                return bot.sendMessage(chatId, 'Похоже вы не обладаете правами администратора в этой группе', {
+                    reply_to_message_id: msg.message_id
+                });
+            }
 
-    try {
-        const admins = await bot.getChatAdministrators(chatId);
-        const isAdmin = admins.some(a => a.user.id === adminId);
+            let targetId = null;
 
-        if (!isAdmin) {
-            return bot.sendMessage(chatId, 'Похоже вы не обладаете правами администратора в этой группе', {
+            if (msg.reply_to_message) {
+                targetId = msg.reply_to_message.from.id;
+            } else {
+                let args = (match[1] || '').trim().split(/\s+/).filter(Boolean);
+
+                if (!args.length) {
+                    return bot.sendMessage(chatId, 'Кажется я не знакома с этим пользователем', {
+                        reply_to_message_id: msg.message_id
+                    });
+                }
+
+                const entityMention = getUserFromEntities(msg);
+                let input = entityMention || args[0];
+
+                const res = await ResolveUser(bot, chatId, input);
+
+                if (!res.ok) {
+                    return bot.sendMessage(chatId, 'Кажется я не знакома с этим пользователем', {
+                        reply_to_message_id: msg.message_id
+                    });
+                }
+
+                targetId = res.id;
+            }
+
+            await bot.unbanChatMember(chatId, targetId);
+
+            const member = await bot.getChatMember(chatId, targetId).catch(() => null);
+            const name = member?.user?.first_name || 'User';
+            const mention = `<a href="tg://user?id=${targetId}">${name}</a>`;
+
+            await bot.sendMessage(chatId,
+                `Пользователь ${mention} разблокирован. С возвращением!`,
+                {
+                    parse_mode: 'HTML',
+                    reply_to_message_id: msg.message_id
+                }
+            );
+
+
+            const logs = loadLogs(chatId);
+            const userLog = getUser(logs, targetId);
+
+            if (!userLog.bans) userLog.bans = [];
+
+            const activeBan = [...userLog.bans].reverse().find(b => b.active);
+
+            if (activeBan) {
+                activeBan.active = false;
+                activeBan.removedAt = new Date().toISOString();
+                activeBan.removedBy = adminId;
+            }
+
+            saveLogs(chatId, logs);
+
+
+            const ulogs = loadUserLogs(targetId);
+            const u = getUserGlobal(ulogs, targetId);
+
+            if (!u.bans) u.bans = [];
+
+            const globalBan = [...u.bans].reverse().find(b =>
+                b.active && b.chatId == chatId
+            );
+
+            if (globalBan) {
+                globalBan.active = false;
+                globalBan.removedAt = new Date().toISOString();
+                globalBan.removedBy = adminId;
+            }
+
+            saveUserLogs(targetId, ulogs);
+
+        } catch (err) {
+            console.error(err);
+            return bot.sendMessage(chatId, 'Простите, я не смогла разблокировать пользователя. Я правда пыталась, но что-то пошло не так', {
                 reply_to_message_id: msg.message_id
             });
         }
-
-        let targetId = null;
-
-        if (msg.reply_to_message) {
-            targetId = msg.reply_to_message.from.id;
-        } else {
-            let args = (match[1] || '').trim().split(/\s+/).filter(Boolean);
-
-            if (!args.length) {
-                return bot.sendMessage(chatId, 'Кажется я не знакома с этим пользователем', {
-                    reply_to_message_id: msg.message_id
-                });
-            }
-
-            const entityMention = getUserFromEntities(msg);
-            let input = entityMention || args[0];
-
-            const res = await ResolveUser(bot, chatId, input);
-
-            if (!res.ok) {
-                return bot.sendMessage(chatId, 'Кажется я не знакома с этим пользователем', {
-                    reply_to_message_id: msg.message_id
-                });
-            }
-
-            targetId = res.id;
-        }
-
-        await bot.unbanChatMember(chatId, targetId);
-
-        const member = await bot.getChatMember(chatId, targetId).catch(() => null);
-        const name = member?.user?.first_name || 'User';
-        const mention = `<a href="tg://user?id=${targetId}">${name}</a>`;
-
-        await bot.sendMessage(chatId,
-            `Пользователь ${mention} разблокирован. С возвращением!`,
-            {
-                parse_mode: 'HTML',
-                reply_to_message_id: msg.message_id
-            }
-        );
-
-
-        const logs = loadLogs(chatId);
-        const userLog = getUser(logs, targetId);
-
-        if (!userLog.bans) userLog.bans = [];
-
-        const activeBan = [...userLog.bans].reverse().find(b => b.active);
-
-        if (activeBan) {
-            activeBan.active = false;
-            activeBan.removedAt = new Date().toISOString();
-            activeBan.removedBy = adminId;
-        }
-
-        saveLogs(chatId, logs);
-
-
-        const ulogs = loadUserLogs(targetId);
-        const u = getUserGlobal(ulogs, targetId);
-
-        if (!u.bans) u.bans = [];
-
-        const globalBan = [...u.bans].reverse().find(b =>
-            b.active && b.chatId == chatId
-        );
-
-        if (globalBan) {
-            globalBan.active = false;
-            globalBan.removedAt = new Date().toISOString();
-            globalBan.removedBy = adminId;
-        }
-
-        saveUserLogs(targetId, ulogs);
-
-    } catch (err) {
-        console.error(err);
-        return bot.sendMessage(chatId, 'Простите, я не смогла разблокировать пользователя. Я правда пыталась, но что-то пошло не так', {
-            reply_to_message_id: msg.message_id
-        });
+        lastcommand = 0;
     }
+    
 });
 
 bot.onText(/\/note(?:\s+(.+))?/, async (msg, match) => {
     const chatId = msg.chat.id;
     const adminId = msg.from.id;
-    if(lastcommand >= commandCd) {
-        if(msg.chat.type === 'private') {
-            return bot.sendMessage(chatId, 'Я могу сделать это только в группе', { reply_to_message_id: msg.message_id})
-        }
-        try {
-            const admins = await bot.getChatAdministrators(chatId);
-            const isAdmin = admins.some(a => a.user.id === adminId);
-
+    if(msg.chat.type === 'private' || msg.chat.type === 'channel') {
+        return bot.sendMessage(chatId, 'Я могу сделать это только в группе')
+    }
+    const admins = await bot.getChatAdministrators(chatId);
+    const isAdmin = admins.some(a => a.user.id === adminId);
+    if(lastcommand >= commandCd || isAdmin) {        
+        try {            
             if (!isAdmin) {
                 return bot.sendMessage(chatId, 'Похоже вы не обадаете правми администратора в этой группе', { reply_to_message_id: msg.message_id});
             }
@@ -845,10 +858,16 @@ bot.onText(/\/unnote (\d+)(?:\s+(.+))?/, async (msg, match) => {
     const chatId = msg.chat.id;
     const adminId = msg.from.id;
     const index = parseInt(match[1]) - 1;
-    if(lastcommand >= commandCd) {
+    if(msg.chat.type === 'private' || msg.chat.type === 'channel') {
+        return bot.sendMessage(chatId, 'Я могу сделать это только в группе')
+    }
+    const admins = await bot.getChatAdministrators(chatId);
+    const isAdmin = admins.some(a => a.user.id === adminId);
+    if(lastcommand >= commandCd || isAdmin) {
         try {
-            const admins = await bot.getChatAdministrators(chatId);
-            if (!admins.some(a => a.user.id === adminId)) return;
+            if(!isAdmin) {
+                return bot.sendMessage(chatId, 'Похоже вы не обладаете правами администратора в этой группе', {reply_to_message_id: msg.message_id})
+            }
             
             let targetId = null;
             let args = (match[1] || '').trim().split(/\s+/);
@@ -926,11 +945,13 @@ bot.onText(/\/unnote (\d+)(?:\s+(.+))?/, async (msg, match) => {
 bot.onText(/\/user(?:\s+(.+))?/, async (msg, match) => {
     const chatId = msg.chat.id;
     const requesterId = msg.from.id;
-    if(lastcommand >= commandCd) {
-        try {
-            const admins = await bot.getChatAdministrators(chatId);
-            const isAdmin = admins.some(a => a.user.id === requesterId);
-
+    if(msg.chat.type === 'private' || msg.chat.type === 'channel') {
+        return bot.sendMessage(chatId, 'Я могу сделать это только в группе')
+    }
+    const admins = await bot.getChatAdministrators(chatId);
+    const isAdmin = admins.some(a => a.user.id === requesterId);
+    if(lastcommand >= commandCd || isAdmin) {
+        try {            
             let args = (match[1] || '').trim().split(/\s+/).filter(Boolean);
 
             let showFull = args.includes('-f');
