@@ -16,6 +16,8 @@ if (!fs.existsSync(USER_LOG_DIR)) fs.mkdirSync(USER_LOG_DIR);
 //настройки
 const modchatID = '';
 const commandCd = 15;
+/* const modChatMode = false; */
+
 
 // кд команд
 var lastcommand = 0;
@@ -316,6 +318,7 @@ bot.onText(/\/mute(?:\s+(.+))?/, async (msg,match) => {
     if(msg.chat.type === 'private' || msg.chat.type === 'channel') {
         return bot.sendMessage(chatId, 'Я могу сделать это только в группе')
     }
+    
     const admins = await bot.getChatAdministrators(chatId);
     const isAdmin = admins.some(admin => admin.user.id === userId);
     if(lastcommand >= commandCd || isAdmin) {
@@ -597,6 +600,7 @@ bot.onText(/\/ban(?:\s+(.+))?/, async (msg, match) => {
     const admins = await bot.getChatAdministrators(chatId);
     const isAdmin = admins.some(a => a.user.id === adminId);
     if(lastcommand >= commandCd || isAdmin) {        
+        lastcommand = 0
             try {
                 
 
@@ -741,7 +745,7 @@ bot.onText(/\/ban(?:\s+(.+))?/, async (msg, match) => {
             }
         }
           
-    lastcommand = 0;
+    
 });
 bot.onText(/\/unban(?:\s+(.+))?/, async (msg, match) => {
     const chatId = msg.chat.id;
@@ -1024,6 +1028,7 @@ bot.onText(/\/user(?:\s+(.+))?/, async (msg, match) => {
     const admins = await bot.getChatAdministrators(chatId);
     const isAdmin = admins.some(a => a.user.id === requesterId);
     if(lastcommand >= commandCd || isAdmin) {
+        lastcommand = 0
         try {            
             let args = (match[1] || '').trim().split(/\s+/).filter(Boolean);
 
@@ -1194,7 +1199,7 @@ bot.onText(/\/user(?:\s+(.+))?/, async (msg, match) => {
             return bot.sendSticker(chatId, 'CAACAgIAAxkBAAEW4xFp3TsFwtS0nT6OivaNRZQ8OmArcwACJVcAAtkTIUlsu94nV6R8wDsE', { reply_to_message_id: msg.message_id})
         }
     }
-    lastcommand = 0;
+    
 });
 bot.onText(/\/RaidMode/i, async (msg) => {
     const chatId = msg.chat.id;
@@ -1205,6 +1210,7 @@ bot.onText(/\/RaidMode/i, async (msg) => {
     const admins = await bot.getChatAdministrators(chatId);
     const isAdmin = admins.some(a => a.user.id === userId);
     if(lastcommand >= commandCd || isAdmin) {
+        lastcommand = 0
         if (!isAdmin) {
             return bot.sendMessage(chatId,
                 'Похоже вы не обладаете правами администратора в этой группе',
@@ -1225,6 +1231,7 @@ bot.onText(/\/unRaidMode/i, async (msg) => {
     const admins = await bot.getChatAdministrators(chatId);
     const isAdmin = admins.some(a => a.user.id === userId);    
     if(lastcommand >= commandCd || isAdmin) {
+        lastcommand = 0
         if (!isAdmin) {
         return bot.sendMessage(chatId,
             'Похоже вы не обладаете правами администратора в этой группе',
@@ -1234,10 +1241,42 @@ bot.onText(/\/unRaidMode/i, async (msg) => {
 
     await disableRaidMode(chatId);
     }
-    lastcommand = 0;
+    
 });
 
+/* bot.onText(/\/MCMode/, async (msg) => {
+    const chatId = msg.chat.id;
+    const userId = msg.from.id;
+    if(msg.chat.type === 'private' || msg.chat.type === 'channel') {
+        return bot.sendMessage(chatId, 'Я могу сделать это только в группе')
+    }
+    const admins = await bot.getChatAdministrators(chatId);
+    const isAdmin = admins.some(a => a.user.id === userId);   
+    
+    if(lastcommand >= commandCd || isAdmin) {
+        lastcommand = 0
+        if(!isAdmin) { return bot.sendMessage(chatId, 'Похоже вы не обладаете правами администратора в этой группе', { reply_to_message_id: msg.message_id })}
+        if(modChatMode == false) {
+            modChatMode = true
+            bot.sendMessage(chatId, 'В этом чате теперь включен режим чата модерации. Я больше не буду откликаться на команды в нём. Чтобы я отключила режим, используйте эту команду ещё раз', { reply_to_message_id: msg.message_id })
+            
+        }
+        if(modChatMode == true) {
+            modChatMode = false
+            bot.sendMessage(chatId, 'Я отключила в этом чате режим чата модерации. Теперь я снова буду откликаться на команды в нём. Чтобы вернуть режим, напишите эту команду ещё раз', { reply_to_message_id: msg.message_id })
+        }
+    }
+    
+}) 
+    
+//перед логикой, после проверки на приватность чата
+if(modChatMode) {
+        return bot,sendMessage(chatId, 'Этот чат настроен как чат модерации. Чтобы снять настройку напишите /MCMode')
+    }
+        
+*/
 
+    
 
 
 bot.on('message', async (msg) => {
