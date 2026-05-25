@@ -197,6 +197,62 @@ function pushGlobalLog(userId, chatId, event) {
 
     saveUserLogs(userId, logs);
 }
+//рейд мод
+const raidModeChats = new Set();
+const joinTracker = {}; 
+
+
+async function enableRaidMode(chatId) {
+    if (raidModeChats.has(chatId)) return;
+
+    raidModeChats.add(chatId);
+
+    try {
+        await bot.setChatPermissions(chatId, {
+            can_send_messages: false,
+            can_send_media_messages: false,
+            can_send_polls: false,
+            can_send_other_messages: false,
+            can_add_web_page_previews: false,
+            can_change_info: false,
+            can_invite_users: false,
+            can_pin_messages: false
+        });
+        bot.sendSticker(chatId, 'CAACAgIAAxkBAAEEKxtqFAYd9VqU8LwWcXcDf1co9MumMQACYksAAlHuGEkXVzfvKmVhfTsE')
+        bot.sendMessage(
+            chatId,
+            'Я обнаружила возможный рейд! Активирован агрессивный режим антиспама и антирейда!\n\n' +
+            '• Всем обычным участникам запрещено писать\n' +
+            '• Новые пользователи будут автоматически исключаться\n' +
+            '• Для отключения используйте /unRaidMode'
+        );
+    } catch (e) {
+        bot.sendMessage(chatId, 'ВНИМАНИЕ, сейчас должен был быть активирован режим агрессивного антиспама и антирейда, но этого не вышло сделать! Я правла пыталась, но что-то пошло не так((')
+        console.error('RaidMode enable error:', e);
+        return bot.sendSticker(chatId, 'CAACAgIAAxkBAAEW4xFp3TsFwtS0nT6OivaNRZQ8OmArcwACJVcAAtkTIUlsu94nV6R8wDsE')
+    }
+}
+
+async function disableRaidMode(chatId) {
+    raidModeChats.delete(chatId);
+
+    try {
+        await bot.setChatPermissions(chatId, {
+            can_send_messages: true,
+            can_send_media_messages: true,
+            can_send_polls: true,
+            can_send_other_messages: true,
+            can_add_web_page_previews: true,
+            can_invite_users: true
+        });
+
+        bot.sendMessage(chatId, 'Я отключила режим агрессивного антиспама и антиреда.');
+    } catch (e) {bot.sendMessage(chatId, 'Простите, я не смогла деактивировать режим агрессивного антиспама и антирейда. Я правда пыталась, но что-то пошло не так((')
+        console.error('RaidMode disable error:', e);
+        return bot.sendSticker(chatId, 'CAACAgIAAxkBAAEW4xFp3TsFwtS0nT6OivaNRZQ8OmArcwACJVcAAtkTIUlsu94nV6R8wDsE')
+    }
+}
+
 
 //команды
 bot.onText(/\/start/, (msg) => {
@@ -214,11 +270,12 @@ bot.onText(/\/commands/, async (msg) => {
     if(msg.chat.type === 'private') {
         return bot.sendMessage(chatId, 'Вот, что я умею: \n   <b>/user</b> — узнать информацию о себе \n   <b>/report</b> — сообщить о нарушителе в чате (ответом на его сообщение) \n   <b>/help</b> — создать запрос в службу поддержки бота', {parse_mode: 'HTML'})
     }
+    const userId = msg.from.id;
     const admins = await bot.getChatAdministrators(chatId);
     const isAdmin = admins.some(admin => admin.user.id === userId);
     if(lastcommand >= commandCd || isAdmin) {
                 lastcommand = 0;
-        const userId = msg.from.id;
+        
 
         try {            
             const text = 'Вот, что я умею: \n   <b>/settings</b> — открыть настройки чата, флаг -mc — отправить ответ в чат модерации (если настроен) \n   <b>/user</b> — узнать информацию о пользователе (ответом на его сообщение или вписав его Id после команды), флаг -f — узнать полную информацию о пользователе, флаг -mc — отправить ответ в чат модерации (если настроен) пример использования команды: /user 12345678910 -f -mc \n   <b>/note</b> — создать заметку о пользователе (ответом на сообщение или указав Id), пример использования команды: \note 12345678910 спамер, команда /unnote НОМЕР_ЗАМЕТКИ — удалить конкретную заметку о пользователе (ответом на сообщение или указав Id), номер заметки можно узнать в информации о пользователе \n   <b>/warn</b> — выдать пользователю предупреждение (ответом на его сообщение или указав его Id), можно указать причину предупреждения, флаг -d — бот удалит сообщение нарушителя (если команда написана ответом на него), флаг -i — предупреждение не исчезает со временем (если настроено время автоматического снятия предупреждений) пример использования команды: /warn 12345678910 Спам -d -i, команда /unwarn НОМЕР_ВАРНА (ответом на сообщение или указав Id) — снять конкретное предупреждение у пользователя, номер предупреждение можно посмотреть в полной информации о пользователе \n   <b>/mute</b> — запретить пользователю писать в чат (ответом на его сообщение или указав его Id), можно указать срок мута в минутах, часах, днях, месяцах буквами m,h,d,M соответственно (если время не указанно, то мут вечный), можно указать причину, флаг -d — бот удалит сообщение нарушителя (если команда написана ответом на него), пример использования команды: /mute 12345678910 5h Спам -d, команда /unwarn (ответом на сообщение или указав Id) — досрочно снять ограничения с пользователя \n   <b>/ban</b> — заблокировать пользователя в чате (ответом на его сообщение или указав его Id), можно указать срок бана в минутах, часах, днях, месяцах буквами m,h,d,M соответственно (если время не указанно, то бан вечный), можно указать причину, флаг -d — бот удалит сообщение нарушителя (если команда написана ответом на него), пример использования команды: /ban 12345678910 5h Спам -d, команда /unban (ответом на сообщение или указав Id) — досрочно разблокировать пользователя \n <b>/raidMode</b> —   включить режим активного антиспама и антирейда, подробнее можно узнать в настройках, команда /unRaidMode — отключить режим агрессивного антиспама и антирейда'
@@ -1123,13 +1180,115 @@ bot.onText(/\/user(?:\s+(.+))?/, async (msg, match) => {
     }
     lastcommand = 0;
 });
+bot.onText(/\/RaidMode/i, async (msg) => {
+    const chatId = msg.chat.id;
+    const userId = msg.from.id;
+    const admins = await bot.getChatAdministrators(chatId);
+    const isAdmin = admins.some(a => a.user.id === userId);
+    if(lastcommand >= commandCd || isAdmin) {
+        if (!isAdmin) {
+            return bot.sendMessage(chatId,
+                'Похоже вы не обладаете правами администратора в этой группе',
+                { reply_to_message_id: msg.message_id }
+            );
+        }
+
+        await enableRaidMode(chatId);
+    }
+    lastcommand = 0;
+});
+bot.onText(/\/unRaidMode/i, async (msg) => {
+    const chatId = msg.chat.id;
+    const userId = msg.from.id;
+    const admins = await bot.getChatAdministrators(chatId);
+    const isAdmin = admins.some(a => a.user.id === userId);
+    if(lastcommand >= commandCd || isAdmin) {
+        if (!isAdmin) {
+        return bot.sendMessage(chatId,
+            'Похоже вы не обладаете правами администратора в этой группе',
+            { reply_to_message_id: msg.message_id }
+        );
+    }
+
+    await disableRaidMode(chatId);
+    }
+    lastcommand = 0;
+});
 
 
 
 
 
+bot.on('new_chat_members', async (msg) => {
+    const chatId = msg.chat.id;
 
+    try {
 
+        
+        if (raidModeChats.has(chatId)) {
+
+            const admins = await bot.getChatAdministrators(chatId);
+
+            for (const user of msg.new_chat_members) {
+
+                const isAdmin = admins.some(a => a.user.id === user.id);
+
+                if (!isAdmin) {
+                    try {
+                        await bot.banChatMember(chatId, user.id);
+                        await bot.unbanChatMember(chatId, user.id);
+                    } catch {}
+                }
+            }
+
+            return;
+        }
+
+        
+        if (!joinTracker[chatId]) {
+    joinTracker[chatId] = [];
+}
+
+const now = Date.now();
+
+for (const user of msg.new_chat_members) {
+    joinTracker[chatId].push({
+        id: user.id,
+        time: now
+    });
+}
+
+joinTracker[chatId] = joinTracker[chatId].filter(
+    entry => now - entry.time <= 15000
+);
+
+if (joinTracker[chatId].length >= 5) {
+
+    const raidUsers = [...joinTracker[chatId]];
+
+    await enableRaidMode(chatId);
+
+    const admins = await bot.getChatAdministrators(chatId);
+
+    for (const entry of raidUsers) {
+
+        const isAdmin = admins.some(a => a.user.id === entry.id);
+
+        if (!isAdmin) {
+            try {
+                await bot.banChatMember(chatId, entry.id);
+                await bot.unbanChatMember(chatId, entry.id);
+            } catch {}
+        }
+    }
+
+    joinTracker[chatId] = [];
+}
+
+    } catch (e) {
+        console.error('Raid detector error:', e);
+    }
+});
 
 setInterval(async () => {
     try {
