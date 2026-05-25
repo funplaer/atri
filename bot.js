@@ -98,15 +98,31 @@ function getUserLogFile(userId) {
     return path.join(USER_LOG_DIR, `${userId}_logs.json`);
 }
 function loadJSON(file) {
-    if (!fs.existsSync(file)) {
-        fs.writeFileSync(file, JSON.stringify({}, null, 2));
+    try {
+        if (!fs.existsSync(file)) {
+            fs.writeFileSync(file, JSON.stringify({}, null, 2));
+            return {};
+        }
+
+        const raw = fs.readFileSync(file, 'utf8');
+
+        if (!raw || raw.trim().length === 0) {
+            return {};
+        }
+
+        return JSON.parse(raw);
+    } catch (e) {
+        console.error(`Broken JSON file: ${file}`, e);
+
         return {};
     }
-    return JSON.parse(fs.readFileSync(file));
 }
 
 function saveJSON(file, data) {
-    fs.writeFileSync(file, JSON.stringify(data, null, 2));
+    const tmp = file + '.tmp';
+
+    fs.writeFileSync(tmp, JSON.stringify(data, null, 2));
+    fs.renameSync(tmp, file);
 }
 
 function getUser(logs, userId) {
@@ -1183,6 +1199,9 @@ bot.onText(/\/user(?:\s+(.+))?/, async (msg, match) => {
 bot.onText(/\/RaidMode/i, async (msg) => {
     const chatId = msg.chat.id;
     const userId = msg.from.id;
+    if(msg.chat.type === 'private' || msg.chat.type === 'channel') {
+        return bot.sendMessage(chatId, 'Я могу сделать это только в группе')
+    }
     const admins = await bot.getChatAdministrators(chatId);
     const isAdmin = admins.some(a => a.user.id === userId);
     if(lastcommand >= commandCd || isAdmin) {
@@ -1200,8 +1219,11 @@ bot.onText(/\/RaidMode/i, async (msg) => {
 bot.onText(/\/unRaidMode/i, async (msg) => {
     const chatId = msg.chat.id;
     const userId = msg.from.id;
+    if(msg.chat.type === 'private' || msg.chat.type === 'channel') {
+        return bot.sendMessage(chatId, 'Я могу сделать это только в группе')
+    }
     const admins = await bot.getChatAdministrators(chatId);
-    const isAdmin = admins.some(a => a.user.id === userId);
+    const isAdmin = admins.some(a => a.user.id === userId);    
     if(lastcommand >= commandCd || isAdmin) {
         if (!isAdmin) {
         return bot.sendMessage(chatId,
@@ -1218,7 +1240,29 @@ bot.onText(/\/unRaidMode/i, async (msg) => {
 
 
 
+bot.on('message', async (msg) => {
+    try {
+        const serviceFields = [
+            'new_chat_members',
+            'left_chat_member',
+            'new_chat_title',
+            'new_chat_photo',
+            'delete_chat_photo',
+            'group_chat_created',
+            'supergroup_chat_created',
+            'channel_chat_created',
+            'pinned_message',
+            'video_chat_started',
+            'video_chat_ended',
+            'video_chat_participants_invited',
+            'video_chat_scheduled'
+        ];
 
+        if (serviceFields.some(field => msg[field] !== undefined)) {
+            await bot.deleteMessage(msg.chat.id, msg.message_id);
+        }
+    } catch {}
+});
 bot.on('new_chat_members', async (msg) => {
     const chatId = msg.chat.id;
 
