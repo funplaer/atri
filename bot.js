@@ -3,7 +3,7 @@ const fs = require('fs');
 const path = require('path');
 
 
-const token = '8661483092:AAEgHTgKKV73SqHI5Obr9Wbww7UkyKvj8FE'; 
+const token = '8661483092:AAGTGHktsVZ9gnUd0P1h2zsElAobyzMIDDQ'; 
 const bot = new TelegramBot(token, { polling: true });
 
 
@@ -16,6 +16,12 @@ if (!fs.existsSync(USER_LOG_DIR)) fs.mkdirSync(USER_LOG_DIR);
 //настройки
 const modchatID = '';
 const commandCd = 15;
+const warnExpireTime = '1M';
+const warnPunishmentCount = 3;
+const warnPunishment = {
+    type: 'mute', // mute или ban
+    duration: 'null' // null = навсегда
+};
 /* const modChatMode = false; */
 
 
@@ -134,6 +140,7 @@ function getUser(logs, userId) {
             mutes: [],
             notes: [],
             bans: [],
+            warns: []
         };
     }
     return logs[userId];
@@ -173,7 +180,8 @@ function getUser(logs, userId) {
             totalPunishments: 0,
             mutes: [],
             notes: [],
-            bans: []
+            bans: [],
+            warns: []
         };
     }
 
@@ -181,6 +189,7 @@ function getUser(logs, userId) {
     if (!user.mutes) user.mutes = [];
     if (!user.notes) user.notes = [];
     if (!user.bans) user.bans = [];
+    if (!user.warns) user.warns = [];
 
     return user;
 }
@@ -190,7 +199,8 @@ function getUserGlobal(logs, userId) {
             totalPunishments: 0,
             mutes: [],
             notes: [],
-            bans: []
+            bans: [],
+            warns: []
         };
     }
 
@@ -199,6 +209,7 @@ function getUserGlobal(logs, userId) {
     if (!user.mutes) user.mutes = [];
     if (!user.notes) user.notes = [];
     if (!user.bans) user.bans = [];
+    if (!user.warns) user.warns = [];
 
     return user;
 }
@@ -1150,6 +1161,61 @@ bot.onText(/\/user(?:\s+(.+))?/, async (msg, match) => {
             if (notes.length === 0) {
                 text += `нет данных\n`;
             }
+            let warns = user.warns || [];
+            if (!showFull) warns = warns.filter(w => w.active);
+
+            text += `\n<b>Предупреждения (${warns.length}):</b>\n`;
+
+            for (const w of warns) {
+
+                const realIndex = user.warns.indexOf(w) + 1;
+
+                text += `\n<b>#${realIndex}</b>\n`;
+                text += `• Статус: ${w.active ? 'активно' : 'снято'}\n`;
+                text += `• Дата выдачи: ${formatDateMSK(w.issuedAt)}\n`;
+
+                if (w.reason) {
+                    text += `• Причина: ${w.reason}\n`;
+                }
+
+                if (w.permanent) {
+                    text += `• Постоянное: да\n`;
+                }
+
+                if (showFull) {
+
+                    let adminText;
+
+                    if (w.adminId === 'system') {
+                        adminText = 'system';
+                    } else {
+                        adminText = await getUserMention(chatId, w.adminId);
+                    }
+
+                    text += `• Выдавший админ: ${adminText}\n`;
+
+                    if (!w.active) {
+
+                        let removedByText;
+
+                        if (w.removedBy === 'system') {
+                            removedByText = 'system';
+                        } else {
+                            removedByText = await getUserMention(
+                                chatId,
+                                w.removedBy
+                            );
+                        }
+
+                        text += `• Дата снятия: ${formatDateMSK(w.removedAt)}\n`;
+                        text += `• Снявший админ: ${removedByText}\n`;
+                    }
+                }
+            }
+
+            if (warns.length === 0) {
+                text += `нет данных\n`;
+            }
             let bans = user.bans || [];
             if (!showFull) bans = bans.filter(b => b.active);
 
@@ -1242,6 +1308,269 @@ bot.onText(/\/unRaidMode/i, async (msg) => {
     await disableRaidMode(chatId);
     }
     
+});
+bot.onText(/\/warn(?:\s+(.+))?/, async (msg, match) => {
+    const chatId = msg.chat.id;
+    const adminId = msg.from.id;
+
+    if (msg.chat.type === 'private' || msg.chat.type === 'channel') {
+        return bot.sendMessage(chatId, 'Я могу сделать это только в группе');
+    }
+
+    const admins = await bot.getChatAdministrators(chatId);
+    const isAdmin = admins.some(a => a.user.id === adminId);
+
+    if (!(lastcommand >= commandCd || isAdmin)) return;
+
+    lastcommand = 0;
+
+    try {
+
+        if (!isAdmin) {
+            return bot.sendMessage(chatId,
+                'Похоже вы не обладаете правами администратора в этой группе',
+                { reply_to_message_id: msg.message_id }
+            );
+        }
+
+        let args = (match[1] || '').trim().split(/\s+/).filter(Boolean);
+
+        let targetId = null;
+        let reason = '';
+        let deleteFlag = false;
+        let ignoreExpire = false;
+
+        if (msg.reply_to_message) {
+            targetId = msg.reply_to_message.from.id;
+        } else if (args.length) {
+
+            const entityMention = getUserFromEntities(msg);
+            let input = entityMention || args[0];
+
+            const res = await ResolveUser(bot, chatId, input);
+
+            if (!res.ok) {
+                return bot.sendMessage(chatId,
+                    'Кажется я не знакома с этим пользователем',
+                    { reply_to_message_id: msg.message_id }
+                );
+            }
+
+            targetId = res.id;
+            args.shift();
+        }
+
+        if (!targetId) {
+            return bot.sendMessage(chatId,
+                'Кажется я не знакома с этим пользователем',
+                { reply_to_message_id: msg.message_id }
+            );
+        }
+
+        if (args.includes('-d')) {
+            deleteFlag = true;
+            args = args.filter(a => a !== '-d');
+        }
+
+        if (args.includes('-i')) {
+            ignoreExpire = true;
+            args = args.filter(a => a !== '-i');
+        }
+
+        reason = args.join(' ');
+
+        const isTargetAdmin =
+            admins.some(a => a.user.id === targetId);
+
+        if (isTargetAdmin) {
+            return bot.sendMessage(chatId,
+                'Я не могу наказать другого администратора',
+                { reply_to_message_id: msg.message_id }
+            );
+        }
+
+        if (deleteFlag && msg.reply_to_message) {
+            try {
+                await bot.deleteMessage(
+                    chatId,
+                    msg.reply_to_message.message_id
+                );
+            } catch {}
+        }
+
+        const member =
+            await bot.getChatMember(chatId, targetId);
+
+        const mention =
+            `<a href="tg://user?id=${targetId}">${member.user.first_name}</a>`;
+
+        await bot.sendMessage(
+            chatId,
+            `Я выдала предупреждение пользователю ${mention}` +
+            (reason ? `\nпо причине ${reason}` : ''),
+            {
+                parse_mode: 'HTML',
+                reply_to_message_id: msg.message_id
+            }
+        );
+
+        const warnEntry = {
+            active: true,
+            permanent: ignoreExpire,
+            issuedAt: new Date().toISOString(),
+            messageText: msg.reply_to_message
+                ? msg.reply_to_message.text || null
+                : null,
+            messageId: msg.reply_to_message
+                ? msg.reply_to_message.message_id
+                : null,
+            reason,
+            adminId,
+            removedAt: null,
+            removedBy: null
+        };
+
+        const logs = loadLogs(chatId);
+        const userLog = getUser(logs, targetId);
+
+        userLog.totalPunishments++;
+        userLog.warns.push(warnEntry);
+
+        saveLogs(chatId, logs);
+
+        const ulogs = loadUserLogs(targetId);
+        const u = getUserGlobal(ulogs, targetId);
+
+        u.totalPunishments++;
+        u.warns.push({
+            ...warnEntry,
+            chatId
+        });
+
+        saveUserLogs(targetId, ulogs);
+        await checkWarnPunishment(chatId, targetId);
+
+    } catch (e) {
+        console.error(e);
+
+        bot.sendMessage(
+            chatId,
+            'Простите, я не смогла выдать предупреждение этому пользователю. Я правда пыталась, но что-то пошло не так',
+            { reply_to_message_id: msg.message_id }
+            
+        );
+        return bot.sendSticker(chatId, 'CAACAgIAAxkBAAEW4xFp3TsFwtS0nT6OivaNRZQ8OmArcwACJVcAAtkTIUlsu94nV6R8wDsE', { reply_to_message_id: msg.message_id})
+    }
+});
+bot.onText(/\/unwarn\s+(\d+)(?:\s+(.+))?/, async (msg, match) => {
+
+    const chatId = msg.chat.id;
+    const adminId = msg.from.id;
+
+    if (msg.chat.type === 'private' || msg.chat.type === 'channel') {
+        return bot.sendMessage(chatId, 'Я могу сделать это только в группе');
+    }
+
+    const admins = await bot.getChatAdministrators(chatId);
+    const isAdmin = admins.some(a => a.user.id === adminId);
+
+    if (!(lastcommand >= commandCd || isAdmin)) return;
+
+    lastcommand = 0;
+
+    try {
+
+        if (!isAdmin) {
+            return bot.sendMessage(chatId,
+                'Похоже вы не обладаете правами администратора в этой группе',
+                { reply_to_message_id: msg.message_id }
+            );
+        }
+
+        const warnIndex = parseInt(match[1]) - 1;
+
+        let targetId = null;
+
+        if (msg.reply_to_message) {
+            targetId = msg.reply_to_message.from.id;
+        } else {
+
+            const args =
+                (match[2] || '').trim().split(/\s+/).filter(Boolean);
+
+            if (!args.length) {
+                return bot.sendMessage(chatId,
+                    'Укажите пользователя',
+                    { reply_to_message_id: msg.message_id }
+                );
+            }
+
+            const res =
+                await ResolveUser(bot, chatId, args[0]);
+
+            if (!res.ok) {
+                return bot.sendMessage(chatId,
+                    'Кажется я не знакома с этим пользователем',
+                    { reply_to_message_id: msg.message_id }
+                );
+            }
+
+            targetId = res.id;
+        }
+
+        const logs = loadLogs(chatId);
+        const user = getUser(logs, targetId);
+
+        if (!user.warns[warnIndex]) {
+            return bot.sendMessage(chatId,
+                'Я не смогла найти такое предупреждение',
+                { reply_to_message_id: msg.message_id }
+            );
+        }
+
+        const warn = user.warns[warnIndex];
+
+        warn.active = false;
+        warn.removedAt = new Date().toISOString();
+        warn.removedBy = adminId;
+
+        saveLogs(chatId, logs);
+
+        const ulogs = loadUserLogs(targetId);
+        const u = getUserGlobal(ulogs, targetId);
+
+        const globalWarn = [...u.warns]
+            .reverse()
+            .find(w =>
+                w.chatId == chatId &&
+                w.issuedAt === warn.issuedAt &&
+                w.active
+            );
+
+        if (globalWarn) {
+            globalWarn.active = false;
+            globalWarn.removedAt = new Date().toISOString();
+            globalWarn.removedBy = adminId;
+        }
+
+        saveUserLogs(targetId, ulogs);
+
+        bot.sendMessage(
+            chatId,
+            'Я сняла это предупреждение',
+            { reply_to_message_id: msg.message_id }
+        );
+
+    } catch (e) {
+        console.error(e);
+        bot.sendMessage(
+            chatId,
+            'Простите, я не смогла снять это предупреждение у пользователя. Я правда пыталась, но что-то пошло не так',
+            { reply_to_message_id: msg.message_id }
+            
+        );
+        return bot.sendSticker(chatId, 'CAACAgIAAxkBAAEW4xFp3TsFwtS0nT6OivaNRZQ8OmArcwACJVcAAtkTIUlsu94nV6R8wDsE', { reply_to_message_id: msg.message_id})
+    }
 });
 
 /* bot.onText(/\/MCMode/, async (msg) => {
@@ -1447,6 +1776,61 @@ setInterval(async () => {
                         saveUserLogs(userId, ulogs);
                     }
                 }
+                if (user.warns) {
+
+                const warnExpireSeconds =
+                    ParseDuration(warnExpireTime);
+
+                if (warnExpireSeconds > 0) {
+
+                    for (const warn of user.warns) {
+
+                        if (!warn.active) continue;
+                        if (warn.permanent) continue;
+
+                        const issued =
+                            new Date(warn.issuedAt).getTime();
+
+                        if (
+                            Date.now() - issued >=
+                            warnExpireSeconds * 1000
+                        ) {
+
+                            warn.active = false;
+                            warn.removedAt =
+                                new Date().toISOString();
+                            warn.removedBy = 'system';
+
+                            const ulogs =
+                                loadUserLogs(userId);
+
+                            const u =
+                                getUserGlobal(ulogs, userId);
+
+                            const globalWarn =
+                                [...u.warns]
+                                    .reverse()
+                                    .find(w =>
+                                        w.chatId == chatId &&
+                                        w.active &&
+                                        w.issuedAt === warn.issuedAt
+                                    );
+
+                            if (globalWarn) {
+                                globalWarn.active = false;
+                                globalWarn.removedAt =
+                                    new Date().toISOString();
+                                globalWarn.removedBy =
+                                    'system';
+                            }
+
+                            saveUserLogs(userId, ulogs);
+
+                            changed = true;
+                        }
+                    }
+                }
+            }
             }
 
             if (changed) {
@@ -1456,4 +1840,175 @@ setInterval(async () => {
     } catch (e) {
         console.error('AUTO EXPIRE ERROR:', e);
     }
+    
 }, 30 * 1000);
+async function checkWarnPunishment(chatId, targetId) {
+
+    try {
+
+        const logs = loadLogs(chatId);
+        const user = getUser(logs, targetId);
+
+        const activeWarns =
+            (user.warns || []).filter(w => w.active).length;
+
+        if (activeWarns < warnPunishmentCount) {
+            return;
+        }
+
+        const now = new Date().toISOString();
+
+        const punishmentDuration =
+            warnPunishment.duration
+                ? ParseDuration(warnPunishment.duration)
+                : null;
+
+        if (warnPunishment.type === 'mute') {
+
+            let untilDate = 0;
+
+            if (punishmentDuration) {
+                untilDate =
+                    Math.floor(Date.now() / 1000) +
+                    punishmentDuration;
+            }
+
+            await bot.restrictChatMember(chatId, targetId, {
+                permissions: {
+                    can_send_messages: false,
+                    can_send_media_messages: false,
+                    can_send_polls: false,
+                    can_send_other_messages: false,
+                    can_add_web_page_previews: false
+                },
+                until_date: untilDate
+            });
+
+            const muteLog = {
+                active: true,
+                issuedAt: now,
+                messageText: null,
+                messageId: null,
+                reason: 'auto (warns)',
+                adminId: 'system',
+                expiresAt: punishmentDuration
+                    ? new Date(
+                        Date.now() +
+                        punishmentDuration * 1000
+                    ).toISOString()
+                    : null,
+                removedAt: null,
+                removedBy: null
+            };
+
+            user.totalPunishments++;
+            user.mutes.push(muteLog);
+
+            saveLogs(chatId, logs);
+
+            const ulogs = loadUserLogs(targetId);
+            const u = getUserGlobal(ulogs, targetId);
+
+            u.totalPunishments++;
+            u.mutes.push({
+                ...muteLog,
+                chatId
+            });
+
+            saveUserLogs(targetId, ulogs);
+            const member =
+                await bot.getChatMember(chatId, targetId)
+                    .catch(() => null);
+
+            const name =
+                member?.user?.first_name || 'Пользователь';
+
+            const mention =
+                `<a href="tg://user?id=${targetId}">${name}</a>`;
+
+            await bot.sendMessage(
+                chatId,
+                `Я автоматически запретила пользователю ${mention} писать в чат за достижение лимита предупреждений (${activeWarns}/${warnPunishmentCount})` +
+                (punishmentDuration
+                    ? `\nСрок: ${formatDuration(punishmentDuration)}`
+                    : ' навсегда'),
+                {
+                    parse_mode: 'HTML'
+                }
+            );
+
+        } else if (warnPunishment.type === 'ban') {
+
+            let untilDate = 0;
+
+            if (punishmentDuration) {
+                untilDate =
+                    Math.floor(Date.now() / 1000) +
+                    punishmentDuration;
+            }
+
+            await bot.banChatMember(chatId, targetId, {
+                until_date: untilDate
+            });
+
+            const banLog = {
+                active: true,
+                issuedAt: now,
+                messageText: null,
+                messageId: null,
+                reason: 'auto (warns)',
+                adminId: 'system',
+                expiresAt: punishmentDuration
+                    ? new Date(
+                        Date.now() +
+                        punishmentDuration * 1000
+                    ).toISOString()
+                    : null,
+                removedAt: null,
+                removedBy: null
+            };
+
+            user.totalPunishments++;
+            user.bans.push(banLog);
+
+            saveLogs(chatId, logs);
+
+            const ulogs = loadUserLogs(targetId);
+            const u = getUserGlobal(ulogs, targetId);
+
+            u.totalPunishments++;
+            u.bans.push({
+                ...banLog,
+                chatId
+            });
+
+            saveUserLogs(targetId, ulogs);
+            const member =
+                await bot.getChatMember(chatId, targetId)
+                    .catch(() => null);
+
+            const name =
+                member?.user?.first_name || 'Пользователь';
+
+            const mention =
+                `<a href="tg://user?id=${targetId}">${name}</a>`;
+
+            await bot.sendMessage(
+                chatId,
+                `Я заблокировала в чате пользователя ${mention} за достижение лимита предупреждений (${activeWarns}/${warnPunishmentCount})` +
+                (punishmentDuration
+                    ? `\nСрок: ${formatDuration(punishmentDuration)}`
+                    : ' навсегда'),
+                {
+                    parse_mode: 'HTML'
+                }
+            );
+        }
+
+    } catch (e) {
+        console.error('WARN AUTO PUNISH ERROR:', e);
+    }
+}
+
+
+
