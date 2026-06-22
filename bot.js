@@ -141,7 +141,9 @@ function getUser(logs, userId) {
             mutes: [],
             notes: [],
             bans: [],
-            warns: []
+            warns: [],
+            reportsSent: [],
+            reportsReceived: []
         };
     }
     return logs[userId];
@@ -182,7 +184,9 @@ function getUser(logs, userId) {
             mutes: [],
             notes: [],
             bans: [],
-            warns: []
+            warns: [],
+            reportsSent: [],
+            reportsReceived: []
         };
     }
 
@@ -191,6 +195,8 @@ function getUser(logs, userId) {
     if (!user.notes) user.notes = [];
     if (!user.bans) user.bans = [];
     if (!user.warns) user.warns = [];
+    if (!user.reportsSent) user.reportsSent = [];
+    if (!user.reportsReceived) user.reportsReceived = [];
 
     return user;
 }
@@ -201,7 +207,9 @@ function getUserGlobal(logs, userId) {
             mutes: [],
             notes: [],
             bans: [],
-            warns: []
+            warns: [],
+            reportsSent: [],
+            reportsReceived: []
         };
     }
 
@@ -211,6 +219,8 @@ function getUserGlobal(logs, userId) {
     if (!user.notes) user.notes = [];
     if (!user.bans) user.bans = [];
     if (!user.warns) user.warns = [];
+    if (!user.reportsSent) user.reportsSent = [];
+    if (!user.reportsReceived) user.reportsReceived = [];
 
     return user;
 }
@@ -1594,11 +1604,35 @@ bot.onText(/\/report(?:\s+(.+))?/i, async (msg, match) => {
                 { reply_to_message_id: msg.message_id }
             );
         }
-
+        
         const reporter = msg.from;
         const offender = msg.reply_to_message.from;
+        
 
         let reason = (match[1] || '').trim();
+        const reportLog = {
+        createdAt: new Date().toISOString(),
+
+        reporterId: reporter.id,
+        reporterName: reporter.first_name,
+
+        offenderId: offender.id,
+        offenderName: offender.first_name,
+
+        reason: reason || null,
+
+        messageText:
+            msg.reply_to_message.text ||
+            msg.reply_to_message.caption ||
+            null,
+
+        messageId: msg.reply_to_message.message_id,
+
+        reportMessageId: null,
+        checked: false,
+        checkedAt: null,
+        checkedBy: null
+    };
 
         let offenderText = msg.reply_to_message.text ||
                            msg.reply_to_message.caption ||
@@ -1656,6 +1690,35 @@ bot.onText(/\/report(?:\s+(.+))?/i, async (msg, match) => {
                 }
             }
         );
+        reportLog.reportMessageId = sent.message_id;
+        const chatLogs = loadLogs(chatId);
+
+        if (!chatLogs._reports) {
+            chatLogs._reports = [];
+        }
+        const reporterLogs = loadUserLogs(reporter.id);
+        const reporterUser = getUserGlobal(reporterLogs, reporter.id);
+
+        reporterUser.reportsSent.push({
+            ...reportLog,
+            chatId
+        });
+
+        saveUserLogs(reporter.id, reporterLogs);
+
+        chatLogs._reports.push(reportLog);
+
+        saveLogs(chatId, chatLogs);
+
+        const offenderLogs = loadUserLogs(offender.id);
+        const offenderUser = getUserGlobal(offenderLogs, offender.id);
+
+        offenderUser.reportsReceived.push({
+            ...reportLog,
+            chatId
+        });
+
+        saveUserLogs(offender.id, offenderLogs);
 
         reportMessages[sent.message_id] = true;
 
@@ -2158,6 +2221,61 @@ bot.on('callback_query', async (query) => {
                 disable_web_page_preview: true
             }
         );
+        const chatLogs = loadLogs(chatId);
+
+        if (chatLogs._reports) {
+
+            const report = chatLogs._reports.find(
+                r => r.reportMessageId === messageId
+            );
+
+            if (report) {
+
+                report.checked = true;
+                report.checkedAt = new Date().toISOString();
+                report.checkedBy = query.from.id;
+
+                saveLogs(chatId, chatLogs);
+
+                const reporterLogs = loadUserLogs(report.reporterId);
+                const reporterUser =
+                    getUserGlobal(reporterLogs, report.reporterId);
+
+                const sentReport =
+                    reporterUser.reportsSent.find(
+                        r =>
+                            r.reportMessageId === messageId &&
+                            r.chatId == chatId
+                    );
+
+                if (sentReport) {
+                    sentReport.checked = true;
+                    sentReport.checkedAt = report.checkedAt;
+                    sentReport.checkedBy = query.from.id;
+                }
+
+                saveUserLogs(report.reporterId, reporterLogs);
+
+                const offenderLogs = loadUserLogs(report.offenderId);
+                const offenderUser =
+                    getUserGlobal(offenderLogs, report.offenderId);
+
+                const receivedReport =
+                    offenderUser.reportsReceived.find(
+                        r =>
+                            r.reportMessageId === messageId &&
+                            r.chatId == chatId
+                    );
+
+                if (receivedReport) {
+                    receivedReport.checked = true;
+                    receivedReport.checkedAt = report.checkedAt;
+                    receivedReport.checkedBy = query.from.id;
+                }
+
+                saveUserLogs(report.offenderId, offenderLogs);
+            }
+        }
 
         delete reportMessages[messageId];
 
