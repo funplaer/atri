@@ -14,7 +14,8 @@ if (!fs.existsSync(CHAT_LOG_DIR)) fs.mkdirSync(CHAT_LOG_DIR);
 if (!fs.existsSync(USER_LOG_DIR)) fs.mkdirSync(USER_LOG_DIR);
 
 //настройки
-const modchatID = '';
+const modchatID = '-5149968967';
+const reportMessages = {};
 const commandCd = 15;
 const warnExpireTime = '1M';
 const warnPunishmentCount = 3;
@@ -1573,6 +1574,109 @@ bot.onText(/\/unwarn\s+(\d+)(?:\s+(.+))?/, async (msg, match) => {
     }
 });
 
+bot.onText(/\/report(?:\s+(.+))?/i, async (msg, match) => {
+    const chatId = msg.chat.id;
+
+    try {
+
+        if (!modchatID) {
+            return bot.sendMessage(
+                chatId,
+                'Чат модерации не настроен, либо вы меня в него не позвали',
+                { reply_to_message_id: msg.message_id }
+            );
+        }
+
+        if (!msg.reply_to_message) {
+            return bot.sendMessage(
+                chatId,
+                'Используйте команду ответом на сообщение нарушителя',
+                { reply_to_message_id: msg.message_id }
+            );
+        }
+
+        const reporter = msg.from;
+        const offender = msg.reply_to_message.from;
+
+        let reason = (match[1] || '').trim();
+
+        let offenderText = msg.reply_to_message.text ||
+                           msg.reply_to_message.caption ||
+                           '[медиа-сообщение]';
+
+        if (offenderText.length > 700) {
+            offenderText = offenderText.substring(0, 700) + '...';
+        }
+
+        let messageLink = 'Сообщение недоступно';
+
+        try {
+
+            if (String(chatId).startsWith('-100')) {
+
+                const internalId = String(chatId).replace('-100', '');
+
+                messageLink =
+                    `https://t.me/c/${internalId}/${msg.reply_to_message.message_id}`;
+            }
+
+        } catch {}
+
+        const reportText =
+            `🚨 <b>Получен репорт</b>\n\n` +
+
+            `👤 <b>Отправил репорт:</b>\n` +
+            `<a href="tg://user?id=${reporter.id}">${reporter.first_name}</a>\n` +
+            `ID: <code>${reporter.id}</code>\n\n` +
+
+            `⚠️ <b>На пользователя:</b>\n` +
+            `<a href="tg://user?id=${offender.id}">${offender.first_name}</a>\n` +
+            `ID: <code>${offender.id}</code>\n\n` +
+
+            (reason
+                ? `📋 <b>Причина:</b>\n${reason}\n\n`
+                : '') +
+
+            `💬 <b>Сообщение нарушителя:</b>\n` +
+            `<a href="${messageLink}">${offenderText}</a>`;
+
+        const sent = await bot.sendMessage(
+            modchatID,
+            reportText,
+            {
+                parse_mode: 'HTML',
+                disable_web_page_preview: true,
+                reply_markup: {
+                    inline_keyboard: [[
+                        {
+                            text: '✅ Отметить как проверенный',
+                            callback_data: 'report_done'
+                        }
+                    ]]
+                }
+            }
+        );
+
+        reportMessages[sent.message_id] = true;
+
+        await bot.sendMessage(
+            chatId,
+            'Я сообщила модерации о нарушителе',
+            { reply_to_message_id: msg.message_id }
+        );
+
+    } catch (e) {
+        console.error('REPORT ERROR:', e);
+
+        bot.sendMessage(
+            chatId,
+            'Простите, я не смогла оповестить модерацию о нарушителе. Я правла пыталась, но что-то пошло не так((',
+            { reply_to_message_id: msg.message_id }
+        );
+        return bot.sendSticker(chatId, 'CAACAgIAAxkBAAEW4xFp3TsFwtS0nT6OivaNRZQ8OmArcwACJVcAAtkTIUlsu94nV6R8wDsE', { reply_to_message_id: msg.message_id})
+    }
+});
+
 /* bot.onText(/\/MCMode/, async (msg) => {
     const chatId = msg.chat.id;
     const userId = msg.from.id;
@@ -2010,5 +2114,62 @@ async function checkWarnPunishment(chatId, targetId) {
     }
 }
 
+bot.on('callback_query', async (query) => {
 
+    try {
+
+        if (query.data !== 'report_done') return;
+
+        const chatId = query.message.chat.id;
+        const messageId = query.message.message_id;
+
+        if (!reportMessages[messageId]) {
+            return bot.answerCallbackQuery(query.id);
+        }
+
+        const admins = await bot.getChatAdministrators(chatId);
+
+        const isAdmin = admins.some(
+            a => a.user.id === query.from.id
+        );
+
+        if (!isAdmin) {
+            return bot.answerCallbackQuery(
+                query.id,
+                {
+                    text: 'Только модераторы могут делать это',
+                    show_alert: true
+                }
+            );
+        }
+
+        const oldText = query.message.text;
+
+        const newText =
+            '✅ <b>РЕПОРТ НЕАКТУАЛЕН — НА НЕГО УЖЕ ОТВЕТИЛИ</b>\n\n' +
+            oldText;
+
+        await bot.editMessageText(
+            newText,
+            {
+                chat_id: chatId,
+                message_id: messageId,
+                parse_mode: 'HTML',
+                disable_web_page_preview: true
+            }
+        );
+
+        delete reportMessages[messageId];
+
+        await bot.answerCallbackQuery(
+            query.id,
+            {
+                text: 'Репорт отмечен как проверенный'
+            }
+        );
+
+    } catch (e) {
+        console.error('REPORT BUTTON ERROR:', e);
+    }
+});
 
