@@ -14,8 +14,8 @@ if (!fs.existsSync(CHAT_LOG_DIR)) fs.mkdirSync(CHAT_LOG_DIR);
 if (!fs.existsSync(USER_LOG_DIR)) fs.mkdirSync(USER_LOG_DIR);
 
 //настройки
-const modchatID = '-5149968967';
-const reportMessages = {};
+const modchatID = '-1003903224584';
+const reportStates = {};
 const commandCd = 15;
 const warnExpireTime = '1M';
 const warnPunishmentCount = 3;
@@ -23,6 +23,7 @@ const warnPunishment = {
     type: 'mute', // mute или ban
     duration: 'null' // null = навсегда
 };
+const quickMuteDuration = '3h';
 /* const modChatMode = false; */
 
 
@@ -236,6 +237,164 @@ function pushGlobalLog(userId, chatId, event) {
     });
 
     saveUserLogs(userId, logs);
+}
+function markReportAsChecked(chatId, messageId, adminId) {
+    const chatLogs = loadLogs(chatId);
+    if (!chatLogs._reports) return false;
+    const report = chatLogs._reports.find(r => r.reportMessageId === messageId);
+    if (!report || report.checked) return false;
+
+    report.checked = true;
+    report.checkedAt = new Date().toISOString();
+    report.checkedBy = adminId;
+    saveLogs(chatId, chatLogs);
+
+    
+    const reporterLogs = loadUserLogs(report.reporterId);
+    const reporterUser = getUserGlobal(reporterLogs, report.reporterId);
+    const sentReport = reporterUser.reportsSent.find(r => r.reportMessageId === messageId && r.chatId == chatId);
+    if (sentReport) {
+        sentReport.checked = true;
+        sentReport.checkedAt = report.checkedAt;
+        sentReport.checkedBy = adminId;
+    }
+    saveUserLogs(report.reporterId, reporterLogs);
+
+    
+    const offenderLogs = loadUserLogs(report.offenderId);
+    const offenderUser = getUserGlobal(offenderLogs, report.offenderId);
+    const receivedReport = offenderUser.reportsReceived.find(r => r.reportMessageId === messageId && r.chatId == chatId);
+    if (receivedReport) {
+        receivedReport.checked = true;
+        receivedReport.checkedAt = report.checkedAt;
+        receivedReport.checkedBy = adminId;
+    }
+    saveUserLogs(report.offenderId, offenderLogs);
+
+    return true;
+}
+async function executeQuickAction(query, action, chatId, messageId, report) {
+    const adminId = query.from.id;
+    const offenderId = report.offenderId;
+    let punishmentText = '';
+
+    try {
+        if (action === 'report_warn') {
+            const reason = report.reason ? `Быстрый ответ на репорт: ${report.reason}` : 'Быстрый ответ на репорт';
+            const warnEntry = {
+                active: true,
+                permanent: false,
+                issuedAt: new Date().toISOString(),
+                messageText: report.messageText || null,
+                messageId: report.messageId || null,
+                reason: reason,
+                adminId: adminId,
+                removedAt: null,
+                removedBy: null
+            };
+            const logs = loadLogs(chatId);
+            const user = getUser(logs, offenderId);
+            user.totalPunishments++;
+            user.warns.push(warnEntry);
+            saveLogs(chatId, logs);
+            const ulogs = loadUserLogs(offenderId);
+            const u = getUserGlobal(ulogs, offenderId);
+            u.totalPunishments++;
+            u.warns.push({ ...warnEntry, chatId: chatId });
+            saveUserLogs(offenderId, ulogs);
+            await checkWarnPunishment(chatId, offenderId);
+            punishmentText = 'предупреждение';
+        } else if (action === 'report_mute') {
+            const duration = ParseDuration(quickMuteDuration);
+            if (!duration) throw new Error('Неверная длительность мута');
+            const untilDate = Math.floor(Date.now() / 1000) + duration;
+            await bot.restrictChatMember(chatId, offenderId, {
+                permissions: {
+                    can_send_messages: false,
+                    can_send_media_messages: false,
+                    can_send_polls: false,
+                    can_send_other_messages: false,
+                    can_add_web_page_previews: false,
+                },
+                until_date: untilDate
+            });
+            const muteEntry = {
+                active: true,
+                issuedAt: new Date().toISOString(),
+                messageText: report.messageText || null,
+                messageId: report.messageId || null,
+                reason: report.reason ? `Быстрый ответ на репорт: ${report.reason}` : 'Быстрый ответ на репорт',
+                adminId: adminId,
+                expiresAt: new Date(Date.now() + duration * 1000).toISOString(),
+                removedAt: null,
+                removedBy: null
+            };
+            const logs = loadLogs(chatId);
+            const user = getUser(logs, offenderId);
+            user.totalPunishments++;
+            user.mutes.push(muteEntry);
+            saveLogs(chatId, logs);
+            const ulogs = loadUserLogs(offenderId);
+            const u = getUserGlobal(ulogs, offenderId);
+            u.totalPunishments++;
+            u.mutes.push({ ...muteEntry, chatId: chatId });
+            saveUserLogs(offenderId, ulogs);
+            punishmentText = `мут на ${quickMuteDuration}`;
+        } else if (action === 'report_ban') {
+            await bot.banChatMember(chatId, offenderId);
+            const banEntry = {
+                active: true,
+                issuedAt: new Date().toISOString(),
+                messageText: report.messageText || null,
+                messageId: report.messageId || null,
+                reason: report.reason ? `Быстрый ответ на репорт: ${report.reason}` : 'Быстрый ответ на репорт',
+                adminId: adminId,
+                expiresAt: null,
+                removedAt: null,
+                removedBy: null
+            };
+            const logs = loadLogs(chatId);
+            const user = getUser(logs, offenderId);
+            user.totalPunishments++;
+            user.bans.push(banEntry);
+            saveLogs(chatId, logs);
+            const ulogs = loadUserLogs(offenderId);
+            const u = getUserGlobal(ulogs, offenderId);
+            u.totalPunishments++;
+            u.bans.push({ ...banEntry, chatId: chatId });
+            saveUserLogs(offenderId, ulogs);
+            punishmentText = 'бан';
+        } else if (action === 'report_reject') {
+            punishmentText = 'отклонён';
+        } else {
+            throw new Error('Неизвестное действие');
+        }
+
+        
+        markReportAsChecked(chatId, messageId, adminId);
+
+        
+        const oldText = query.message.text;
+        const newText = `Репорт проверен, наказание: ${punishmentText}\n\n` + oldText;
+        await bot.editMessageText(newText, {
+            chat_id: query.message.chat.id,
+            message_id: messageId,
+            parse_mode: 'HTML',
+            disable_web_page_preview: true,
+            reply_markup: {} 
+        });
+
+        
+        if (reportStates[messageId]) {
+            clearTimeout(reportStates[messageId].timer);
+            delete reportStates[messageId];
+        }
+
+        bot.answerCallbackQuery(query.id, { text: `Выполнено: ${punishmentText}` });
+    } catch (e) {
+        console.error('Execute quick action error:', e);
+        bot.answerCallbackQuery(query.id, { text: 'Ошибка при выполнении действия', show_alert: true });
+    }
 }
 //рейд мод
 const raidModeChats = new Set();
@@ -1612,7 +1771,7 @@ bot.onText(/\/report(?:\s+(.+))?/i, async (msg, match) => {
         let reason = (match[1] || '').trim();
         const reportLog = {
         createdAt: new Date().toISOString(),
-
+        sourceChatId: chatId,
         reporterId: reporter.id,
         reporterName: reporter.first_name,
 
@@ -1657,39 +1816,52 @@ bot.onText(/\/report(?:\s+(.+))?/i, async (msg, match) => {
         } catch {}
 
         const reportText =
-            `🚨 <b>Получен репорт</b>\n\n` +
+            `<b>Получен репорт</b>\n\n` +
 
-            `👤 <b>Отправил репорт:</b>\n` +
+            `<b>Отправил репорт:</b>\n` +
             `<a href="tg://user?id=${reporter.id}">${reporter.first_name}</a>\n` +
             `ID: <code>${reporter.id}</code>\n\n` +
 
-            `⚠️ <b>На пользователя:</b>\n` +
+            `<b>На пользователя:</b>\n` +
             `<a href="tg://user?id=${offender.id}">${offender.first_name}</a>\n` +
             `ID: <code>${offender.id}</code>\n\n` +
 
             (reason
-                ? `📋 <b>Причина:</b>\n${reason}\n\n`
+                ? `<b>Причина:</b>\n${reason}\n\n`
                 : '') +
 
-            `💬 <b>Сообщение нарушителя:</b>\n` +
+            `<b>Сообщение нарушителя:</b>\n` +
             `<a href="${messageLink}">${offenderText}</a>`;
 
-        const sent = await bot.sendMessage(
-            modchatID,
-            reportText,
-            {
-                parse_mode: 'HTML',
-                disable_web_page_preview: true,
-                reply_markup: {
-                    inline_keyboard: [[
-                        {
-                            text: '✅ Отметить как проверенный',
-                            callback_data: 'report_done'
-                        }
-                    ]]
-                }
-            }
-        );
+        const keyboard = {
+        inline_keyboard: [
+            [
+                { text: 'Предупреждение', callback_data: 'report_warn' },
+                { text: `Мут ${quickMuteDuration}`, callback_data: 'report_mute' },
+                { text: 'Бан', callback_data: 'report_ban' }
+            ],
+            [
+                { text: 'Отклонить', callback_data: 'report_reject' },
+                { text: 'Отметить как проверенный', callback_data: 'report_done' }
+            ]
+        ]
+    };
+
+    const sent = await bot.sendMessage(
+        modchatID,
+        reportText,
+        {
+            parse_mode: 'HTML',
+            disable_web_page_preview: true,
+            reply_markup: keyboard
+        }
+    );
+    reportLog.reportMessageId = sent.message_id;
+
+    
+    reportStates[sent.message_id] = {};
+    
+
         reportLog.reportMessageId = sent.message_id;
         const chatLogs = loadLogs(chatId);
 
@@ -1720,7 +1892,7 @@ bot.onText(/\/report(?:\s+(.+))?/i, async (msg, match) => {
 
         saveUserLogs(offender.id, offenderLogs);
 
-        reportMessages[sent.message_id] = true;
+        
 
         await bot.sendMessage(
             chatId,
@@ -2178,116 +2350,86 @@ async function checkWarnPunishment(chatId, targetId) {
 }
 
 bot.on('callback_query', async (query) => {
-
     try {
-
-        if (query.data !== 'report_done') return;
-
-        const chatId = query.message.chat.id;
+        const modChatId = query.message.chat.id; 
         const messageId = query.message.message_id;
+        const data = query.data;
 
-        if (!reportMessages[messageId]) {
-            return bot.answerCallbackQuery(query.id);
+        if (!reportStates[messageId]) {
+            return bot.answerCallbackQuery(query.id, { text: 'Я не нашла такой репорт' });
         }
 
-        const admins = await bot.getChatAdministrators(chatId);
-
-        const isAdmin = admins.some(
-            a => a.user.id === query.from.id
-        );
-
+        const state = reportStates[messageId];
+        const isAdmin = (await bot.getChatAdministrators(modChatId)).some(a => a.user.id === query.from.id);
         if (!isAdmin) {
-            return bot.answerCallbackQuery(
-                query.id,
-                {
-                    text: 'Только модераторы могут делать это',
-                    show_alert: true
-                }
-            );
+            return bot.answerCallbackQuery(query.id, { text: 'Только модераторы могут это делать', show_alert: true });
         }
 
-        const oldText = query.message.text;
+        
+        let report = null;
+        let reportChatId = null;
+        
+        const chatFiles = fs.readdirSync(CHAT_LOG_DIR);
+        for (const file of chatFiles) {
+            const chatId = file.replace('_logs.json', '');
+            const logs = loadLogs(chatId);
+            if (logs._reports) {
+                const found = logs._reports.find(r => r.reportMessageId === messageId);
+                if (found) {
+                    report = found;
+                    reportChatId = chatId;
+                    break;
+                }
+            }
+        }
 
-        const newText =
-            '✅ <b>РЕПОРТ НЕАКТУАЛЕН — НА НЕГО УЖЕ ОТВЕТИЛИ</b>\n\n' +
-            oldText;
+        if (!report || !reportChatId) {
+            return bot.answerCallbackQuery(query.id, { text: 'Я не нашла такой репорт' });
+        }
 
-        await bot.editMessageText(
-            newText,
-            {
-                chat_id: chatId,
+        if (report.checked) {
+            return bot.answerCallbackQuery(query.id, { text: 'Этот репорт уже обработан' });
+        }
+
+        if (data === 'report_done') {
+            markReportAsChecked(reportChatId, messageId, query.from.id);
+            
+            const oldText = query.message.text;
+            const newText = 'РЕПОРТ ПРОВЕРЕН (без наказания)\n\n' + oldText;
+            await bot.editMessageText(newText, {
+                chat_id: modChatId, 
                 message_id: messageId,
                 parse_mode: 'HTML',
-                disable_web_page_preview: true
-            }
-        );
-        const chatLogs = loadLogs(chatId);
-
-        if (chatLogs._reports) {
-
-            const report = chatLogs._reports.find(
-                r => r.reportMessageId === messageId
-            );
-
-            if (report) {
-
-                report.checked = true;
-                report.checkedAt = new Date().toISOString();
-                report.checkedBy = query.from.id;
-
-                saveLogs(chatId, chatLogs);
-
-                const reporterLogs = loadUserLogs(report.reporterId);
-                const reporterUser =
-                    getUserGlobal(reporterLogs, report.reporterId);
-
-                const sentReport =
-                    reporterUser.reportsSent.find(
-                        r =>
-                            r.reportMessageId === messageId &&
-                            r.chatId == chatId
-                    );
-
-                if (sentReport) {
-                    sentReport.checked = true;
-                    sentReport.checkedAt = report.checkedAt;
-                    sentReport.checkedBy = query.from.id;
-                }
-
-                saveUserLogs(report.reporterId, reporterLogs);
-
-                const offenderLogs = loadUserLogs(report.offenderId);
-                const offenderUser =
-                    getUserGlobal(offenderLogs, report.offenderId);
-
-                const receivedReport =
-                    offenderUser.reportsReceived.find(
-                        r =>
-                            r.reportMessageId === messageId &&
-                            r.chatId == chatId
-                    );
-
-                if (receivedReport) {
-                    receivedReport.checked = true;
-                    receivedReport.checkedAt = report.checkedAt;
-                    receivedReport.checkedBy = query.from.id;
-                }
-
-                saveUserLogs(report.offenderId, offenderLogs);
-            }
+                disable_web_page_preview: true,
+                reply_markup: {} 
+            });
+            delete reportStates[messageId];
+            return bot.answerCallbackQuery(query.id, { text: 'Я отметила репорт как проверенный' });
         }
 
-        delete reportMessages[messageId];
+        const action = data;
 
-        await bot.answerCallbackQuery(
-            query.id,
-            {
-                text: 'Репорт отмечен как проверенный'
-            }
-        );
-
+        if (state.pendingAction === action && Date.now() - state.lastPress < 3000) {
+            clearTimeout(state.timer);
+            state.pendingAction = null;
+            state.lastPress = null;
+            state.timer = null;
+            await executeQuickAction(query, action, reportChatId, messageId, report);
+            return;
+        } else {
+            if (state.timer) clearTimeout(state.timer);
+            state.pendingAction = action;
+            state.lastPress = Date.now();
+            state.timer = setTimeout(() => {
+                state.pendingAction = null;
+                state.lastPress = null;
+                state.timer = null;
+            }, 3000);
+            bot.answerCallbackQuery(query.id, { text: 'Нажмите ещё раз в течение 3 секунд для подтверждения' });
+            return;
+        }
     } catch (e) {
-        console.error('REPORT BUTTON ERROR:', e);
+        console.error('Callback error:', e);
+        bot.answerCallbackQuery(query.id, { text: 'Ошибка' });
     }
 });
-
