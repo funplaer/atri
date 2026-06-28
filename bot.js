@@ -1,9 +1,10 @@
 const TelegramBot = require('node-telegram-bot-api');
 const fs = require('fs');
 const path = require('path');
+const { send } = require('process');
 
 
-const token = '8661483092:AAGTGHktsVZ9gnUd0P1h2zsElAobyzMIDDQ'; 
+const token = '8661483092:AAGamDTUFJlyOoDBgu8kj0RBm-BoAkO-Hr8'; 
 const bot = new TelegramBot(token, { polling: true });
 
 
@@ -25,6 +26,16 @@ const warnPunishment = {
 };
 const quickMuteDuration = '3h';
 /* const modChatMode = false; */
+
+
+// === Настройки поддержки ===
+const SUPPORT_CHAT_ID = '-1003986752214';
+const TICKETS_FILE = path.join(__dirname, 'tickets.json');
+const RATINGS_FILE = path.join(__dirname, 'ratings.json');
+
+// === Состояния для создания тикета ===
+const ticketCreationStates = {};
+const confirmCloseStates = {}; 
 
 
 // кд команд
@@ -100,6 +111,7 @@ async function getUserMention(chatId, userId) {
 }
 
 //json логи
+
 function getChatLogFile(chatId) {
     return path.join(CHAT_LOG_DIR, `${chatId}_logs.json`);
 }
@@ -395,6 +407,26 @@ async function executeQuickAction(query, action, chatId, messageId, report) {
         console.error('Execute quick action error:', e);
         bot.answerCallbackQuery(query.id, { text: 'Ошибка при выполнении действия', show_alert: true });
     }
+}
+function loadTickets() {
+    return loadJSON(TICKETS_FILE);
+}
+function saveTickets(data) {
+    saveJSON(TICKETS_FILE, data);
+}
+function loadRatings() {
+    return loadJSON(RATINGS_FILE);
+}
+function saveRatings(data) {
+    saveJSON(RATINGS_FILE, data);
+}
+function generateTicketNumber() {
+    const tickets = loadTickets();
+    let max = 0;
+    for (const key of Object.keys(tickets)) {
+        if (tickets[key].ticketNumber > max) max = tickets[key].ticketNumber;
+    }
+    return max + 1;
 }
 //рейд мод
 const raidModeChats = new Set();
@@ -1216,6 +1248,9 @@ bot.onText(/\/user(?:\s+(.+))?/, async (msg, match) => {
             let showFull = args.includes('-f');
             args = args.filter(a => a !== '-f');
 
+            let sendToModChat = args.includes('-mc');
+            args = args.filter(a => a !== '-mc');
+
             let targetId = requesterId;
 
             
@@ -1243,6 +1278,7 @@ bot.onText(/\/user(?:\s+(.+))?/, async (msg, match) => {
             if (!isAdmin) {
                 targetId = requesterId;
                 showFull = false;
+                sendToModChat = false;
             }
 
             const logs = loadLogs(chatId);
@@ -1253,7 +1289,11 @@ bot.onText(/\/user(?:\s+(.+))?/, async (msg, match) => {
             const name = member?.user?.first_name || 'Unknown';
             const mention = `<a href="tg://user?id=${targetId}">${name}</a>`;
 
-            let text = `<b>Пользователь:</b> ${mention}\n\n`;
+            let text;
+            if(sendToModChat){
+                text += `Информация отправлена в модераторский чат \n`
+            }
+            text += `<b>Пользователь:</b> ${mention}\n\n`;
 
             
 
@@ -1421,6 +1461,26 @@ bot.onText(/\/user(?:\s+(.+))?/, async (msg, match) => {
 
             if (bans.length === 0) {
                 text += `нет данных\n`;
+            }
+            if (sendToModChat) {
+                if (!modchatID) {
+                    return bot.sendMessage(chatId, 'Чат модерации не настроен', { reply_to_message_id: msg.message_id });
+                }
+                
+                try {
+                    await bot.sendMessage(modchatID, text, {
+                        parse_mode: 'HTML',
+                        disable_web_page_preview: true
+                    });
+                    return bot.sendMessage(chatId, 'Я отправила информацию о пользователе в чат модерации', { 
+                        reply_to_message_id: msg.message_id 
+                    });
+                } catch (e) {
+                    console.error('Send to modchat error:', e);
+                    return bot.sendMessage(chatId, 'Я не смогла отправить информацию в чат модерации. Проверьте, что я добавлена туда и у меня есть права, либо используйте команду без флага -mc', { 
+                        reply_to_message_id: msg.message_id 
+                    });
+                }
             }
 
             return bot.sendMessage(chatId, text, {
@@ -1816,21 +1876,21 @@ bot.onText(/\/report(?:\s+(.+))?/i, async (msg, match) => {
         } catch {}
 
         const reportText =
-            `<b>Получен репорт</b>\n\n` +
+            `<b>• Получен репорт</b>\n\n` +
 
-            `<b>Отправил репорт:</b>\n` +
+            `<b>• Отправил репорт:</b>\n` +
             `<a href="tg://user?id=${reporter.id}">${reporter.first_name}</a>\n` +
             `ID: <code>${reporter.id}</code>\n\n` +
 
-            `<b>На пользователя:</b>\n` +
+            `<b>• На пользователя:</b>\n` +
             `<a href="tg://user?id=${offender.id}">${offender.first_name}</a>\n` +
             `ID: <code>${offender.id}</code>\n\n` +
 
             (reason
-                ? `<b>Причина:</b>\n${reason}\n\n`
+                ? `<b>• Причина:</b>\n${reason}\n\n`
                 : '') +
 
-            `<b>Сообщение нарушителя:</b>\n` +
+            `<b>• Сообщение нарушителя:</b>\n` +
             `<a href="${messageLink}">${offenderText}</a>`;
 
         const keyboard = {
@@ -1911,7 +1971,254 @@ bot.onText(/\/report(?:\s+(.+))?/i, async (msg, match) => {
         return bot.sendSticker(chatId, 'CAACAgIAAxkBAAEW4xFp3TsFwtS0nT6OivaNRZQ8OmArcwACJVcAAtkTIUlsu94nV6R8wDsE', { reply_to_message_id: msg.message_id})
     }
 });
+bot.onText(/\/help/, async (msg) => {
+    const chatId = msg.chat.id;
+    const userId = msg.from.id;
 
+    
+    if (msg.chat.type !== 'private') {
+        return bot.sendMessage(chatId, 'Для создания обращения напишите /help в личные сообщения боту.', {
+            reply_to_message_id: msg.message_id
+        });
+    }
+
+    
+    const tickets = loadTickets();
+    const userTicket = Object.values(tickets).find(t => t.userId === userId && t.status === 'open');
+    if (userTicket) {
+        return bot.sendMessage(chatId, `У вас уже есть открытый тикет #${userTicket.ticketNumber}. Закройте его перед созданием нового.`);
+    }
+
+    
+    ticketCreationStates[userId] = { step: 'awaiting_topic' };
+    bot.sendMessage(chatId, 'Пожалуйста, отправьте тему запроса (не более 100 символов).');
+});
+bot.onText(/\/tickets/, async (msg) => {
+    const chatId = msg.chat.id;
+    if (msg.chat.type !== 'private') return; 
+
+    const userId = msg.from.id;
+    const tickets = loadTickets();
+    const openTickets = Object.values(tickets).filter(t => t.userId === userId && t.status === 'open');
+
+    if (openTickets.length === 0) {
+        return bot.sendMessage(chatId, 'У вас нет открытых тикетов.');
+    }
+
+    let text = 'Ваши открытые тикеты:\n';
+    for (const t of openTickets) {
+        text += `\n#${t.ticketNumber} — ${t.topic} (создан ${new Date(t.createdAt).toLocaleString()})`;
+    }
+    bot.sendMessage(chatId, text);
+});
+bot.onText(/\/close/, async (msg) => {
+    const chatId = msg.chat.id;
+
+    if (chatId !== parseInt(SUPPORT_CHAT_ID) || !msg.message_thread_id) {
+        return;
+    }
+
+    const admins = await bot.getChatAdministrators(chatId);
+    const isAdmin = admins.some(a => a.user.id === msg.from.id);
+    if (!isAdmin) {
+        return bot.sendMessage(chatId, 'Только операторы могут закрыть тикет.', {
+            message_thread_id: msg.message_thread_id
+        });
+    }
+
+    const tickets = loadTickets();
+    const ticket = Object.values(tickets).find(t => t.topicId === msg.message_thread_id && t.status === 'open');
+    if (!ticket) {
+        return bot.sendMessage(chatId, 'Тикет не найден или уже закрыт.', {
+            message_thread_id: msg.message_thread_id
+        });
+    }
+
+    if (confirmCloseStates[msg.from.id]) {
+        return bot.sendMessage(chatId, 'У вас уже есть активный запрос на закрытие. Подтвердите его или подождите 20 секунд.', {
+            message_thread_id: msg.message_thread_id
+        });
+    }
+
+    const code = Math.floor(1000 + Math.random() * 9000);
+    confirmCloseStates[msg.from.id] = { code, timer: null, ticketNumber: ticket.ticketNumber };
+
+    const confirmMsg = await bot.sendMessage(chatId,
+        `Для подтверждения закрытия тикета #${ticket.ticketNumber} отправьте сообщение с кодом: ЗАКРЫТЬ ${code}. У вас 20 секунд.`,
+        { message_thread_id: msg.message_thread_id }
+    );
+
+    const timer = setTimeout(async () => {
+        delete confirmCloseStates[msg.from.id];
+        try {
+            await bot.editMessageText('⏰ Время вышло. Закрытие отменено.', {
+                chat_id: chatId,
+                message_id: confirmMsg.message_id,
+                message_thread_id: msg.message_thread_id
+            });
+        } catch (e) {}
+    }, 20000);
+    confirmCloseStates[msg.from.id].timer = timer;
+});
+
+
+
+
+
+bot.on('message', async (msg) => {
+    const chatId = msg.chat.id;
+    const userId = msg.from.id;
+    if (msg.chat.type !== 'private') return;
+    
+
+    
+    if (ticketCreationStates[userId]) {
+        const state = ticketCreationStates[userId];
+        if (state.step === 'awaiting_topic') {
+            const topic = msg.text?.trim();
+            if (!topic || topic.length > 100) {
+                return bot.sendMessage(chatId, 'Тема должна быть не более 100 символов. Попробуйте ещё раз.');
+            }
+            state.topic = topic;
+            state.step = 'awaiting_description';
+            return bot.sendMessage(chatId, 'Теперь опишите проблему подробно (не более 800 символов). Вы можете прикрепить до 5 медиафайлов.');
+        }
+
+        if (state.step === 'awaiting_description') {
+            
+            let description = msg.text?.trim() || '';
+            if (description.length > 800) {
+                return bot.sendMessage(chatId, 'Описание не должно превышать 800 символов. Попробуйте короче.');
+            }
+
+            
+            const media = [];
+            if (msg.photo) {
+                const largestPhoto = msg.photo[msg.photo.length - 1];
+                media.push({ type: 'photo', file_id: largestPhoto.file_id });
+            }
+            if (msg.video) media.push({ type: 'video', file_id: msg.video.file_id });
+            if (msg.document) media.push({ type: 'document', file_id: msg.document.file_id });
+            if (msg.audio) media.push({ type: 'audio', file_id: msg.audio.file_id });
+            if (msg.animation) media.push({ type: 'animation', file_id: msg.animation.file_id });
+
+            
+            if (media.length) {
+                if (!state.media) state.media = [];
+                state.media.push(...media);
+                if (state.media.length > 5) {
+                    return bot.sendMessage(chatId, 'Не более 5 медиафайлов. Уберите лишние.');
+                }
+            }
+
+            
+            if (description) {
+                state.description = description;
+                state.step = 'awaiting_urgency';
+                
+                const keyboard = {
+                    inline_keyboard: [
+                        [
+                            { text: 'Максимальная', callback_data: 'urgency_high' },
+                            { text: 'Умеренная', callback_data: 'urgency_medium' },
+                            { text: 'Низкая', callback_data: 'urgency_low' }
+                        ]
+                    ]
+                };
+                return bot.sendMessage(chatId, 'Выберите срочность запроса:', { reply_markup: keyboard });
+            } else {
+                
+                return bot.sendMessage(chatId, 'Пожалуйста, добавьте текстовое описание к запросу.');
+            }
+        }
+        if (ticketCreationStates[userId] && ticketCreationStates[userId].step === 'extra_message') {
+        const state = ticketCreationStates[userId];
+        const ticketNumber = state.ticketNumber;
+        const tickets = loadTickets();
+        const ticket = tickets[ticketNumber];
+        if (!ticket || ticket.status !== 'open') {
+            delete ticketCreationStates[userId];
+            return bot.sendMessage(chatId, 'Тикет уже закрыт.');
+        }
+
+        const description = msg.text?.trim() || '';
+        if (description.length > 800) {
+            return bot.sendMessage(chatId, 'Сообщение не должно превышать 800 символов.');
+        }
+
+        const media = [];
+        if (msg.photo) {
+            const largestPhoto = msg.photo[msg.photo.length - 1];
+            media.push({ type: 'photo', file_id: largestPhoto.file_id });
+        }
+        if (msg.video) media.push({ type: 'video', file_id: msg.video.file_id });
+        if (msg.document) media.push({ type: 'document', file_id: msg.document.file_id });
+        if (msg.audio) media.push({ type: 'audio', file_id: msg.audio.file_id });
+        if (msg.animation) media.push({ type: 'animation', file_id: msg.animation.file_id });
+        
+        if (media.length > 5) {
+            return bot.sendMessage(chatId, 'Не более 5 медиафайлов.');
+        }
+
+        if (description) {
+            let content = `<b>Дополнительное сообщение от пользователя:</b>\n\n${description}`;
+            await bot.sendMessage(SUPPORT_CHAT_ID, content, {
+                message_thread_id: ticket.topicId,
+                parse_mode: 'HTML'
+            });
+        }
+
+        if (media.length > 0) {
+    for (const m of media) {
+        try {
+            await bot.sendMessage(SUPPORT_CHAT_ID, '', {
+                message_thread_id: ticket.topicId,
+                [m.type]: m.file_id
+            });
+        } catch (err) {
+            console.error('Ошибка отправки медиа:', err);
+            try {
+                await bot.sendDocument(SUPPORT_CHAT_ID, m.file_id, {
+                    message_thread_id: ticket.topicId,
+                    caption: 'Вложение'
+                });
+            } catch (e2) {
+                console.error('Не удалось отправить медиа:', e2);
+            }
+        }
+    }
+}
+
+        ticket.messages.push({
+            type: 'user',
+            text: description,
+            media,
+            timestamp: new Date().toISOString()
+        });
+        tickets[ticketNumber] = ticket;
+        saveTickets(tickets);
+
+        delete ticketCreationStates[userId];
+        bot.sendMessage(chatId, 'Ваше сообщение отправлено в поддержку.');
+    }
+    }
+
+    
+    if (confirmCloseStates[userId]) {
+        const state = confirmCloseStates[userId];
+        const expected = `ЗАКРЫТЬ ${state.code}`;
+        if (msg.text === expected) {
+            clearTimeout(state.timer);
+            delete confirmCloseStates[userId];
+            
+            await closeTicket(state.ticketNumber, userId, 'user');
+        } else {
+            bot.sendMessage(chatId, 'Неверный код. Закрытие отменено.');
+            clearTimeout(state.timer);
+            delete confirmCloseStates[userId];
+        }
+    }
+});
 /* bot.onText(/\/MCMode/, async (msg) => {
     const chatId = msg.chat.id;
     const userId = msg.from.id;
@@ -2433,3 +2740,324 @@ bot.on('callback_query', async (query) => {
         bot.answerCallbackQuery(query.id, { text: 'Ошибка' });
     }
 });
+
+
+bot.on('callback_query', async (query) => {
+    const chatId = query.message.chat.id;
+    const userId = query.from.id;
+    const data = query.data;
+
+    
+    if (data.startsWith('urgency_')) {
+        const urgencyMap = { high: 'Максимальная', medium: 'Умеренная', low: 'Низкая' };
+        const urgency = data.split('_')[1];
+        const state = ticketCreationStates[userId];
+        if (!state || state.step !== 'awaiting_urgency') {
+            return bot.answerCallbackQuery(query.id, { text: 'Что-то пошло не так. Попробуйте начать заново /help' });
+        }
+        state.urgency = urgencyMap[urgency] || 'Низкая';
+
+        
+        const ticketNumber = generateTicketNumber();
+        const ticket = {
+            ticketNumber,
+            userId: userId,
+            userName: query.from.first_name,
+            topic: state.topic,
+            description: state.description,
+            media: state.media || [],
+            urgency: state.urgency,
+            status: 'open',
+            createdAt: new Date().toISOString(),
+            topicId: null, 
+            messages: []
+        };
+
+        
+        const tickets = loadTickets();
+        tickets[ticketNumber] = ticket;
+        saveTickets(tickets);
+        delete ticketCreationStates[userId];
+
+        
+        const userMsg = `Тикет #${ticketNumber} создан.\n` +
+                        `Тема: ${ticket.topic}\n` +
+                        `Статус: открыт`;
+        const keyboard = {
+            inline_keyboard: [
+                [
+                    { text: ' Отправить дополнительное сообщение', callback_data: `extra_${ticketNumber}` },
+                    { text: 'Закрыть тикет', callback_data: `close_${ticketNumber}` }
+                ]
+            ]
+        };
+        await bot.sendMessage(chatId, userMsg, { reply_markup: keyboard });
+
+        
+        try {
+            const topicName = `Тикет #${ticketNumber}: ${ticket.topic.substring(0, 30)}`;
+            const topic = await bot.createForumTopic(SUPPORT_CHAT_ID, topicName);
+            ticket.topicId = topic.message_thread_id;
+            
+            let content = `<b>Тема:</b> ${ticket.topic}\n<b>Описание:</b> ${ticket.description || '—'}\n<b>Срочность:</b> ${ticket.urgency}`;
+            if (ticket.media.length) {
+                content += `\n<b>Вложения:</b> ${ticket.media.length} файлов`;
+            }
+            await bot.sendMessage(SUPPORT_CHAT_ID, content, {
+                message_thread_id: ticket.topicId,
+                parse_mode: 'HTML'
+            });
+            if (ticket.media.length > 0) {
+                for (const m of ticket.media) {
+                    try {
+                        await bot.sendMessage(SUPPORT_CHAT_ID, '', {
+                            message_thread_id: ticket.topicId,
+                            [m.type]: m.file_id
+                        });
+                    } catch (err) {
+                        console.error('Ошибка отправки медиа в тикете:', err);
+                    }
+                }
+            }
+            
+            const pinnedMsg = await bot.sendMessage(SUPPORT_CHAT_ID, 'Данный тикет открыт. Для помощи отвечайте в этой ветке.', {
+                message_thread_id: ticket.topicId
+            });
+            await bot.pinChatMessage(SUPPORT_CHAT_ID, pinnedMsg.message_id, { message_thread_id: ticket.topicId });
+
+            
+            tickets[ticketNumber] = ticket;
+            saveTickets(tickets);
+
+            bot.answerCallbackQuery(query.id, { text: 'Тикет создан!' });
+        } catch (e) {
+            console.error('Ошибка создания темы:', e);
+            bot.sendMessage(chatId, 'Не удалось создать тему в группе поддержки. Обратитесь к администратору.');
+        }
+        return;
+    }
+
+    
+    if (data.startsWith('extra_')) {
+        const ticketNumber = parseInt(data.split('_')[1]);
+        const tickets = loadTickets();
+        const ticket = tickets[ticketNumber];
+        if (!ticket || ticket.status !== 'open') {
+            return bot.answerCallbackQuery(query.id, { text: 'Тикет не найден или закрыт.' });
+        }
+        
+        ticketCreationStates[userId] = { step: 'extra_message', ticketNumber };
+        bot.sendMessage(chatId, 'Отправьте дополнительное сообщение (до 800 символов) и до 5 медиафайлов.');
+        bot.answerCallbackQuery(query.id);
+        return;
+    }
+
+    
+    if (data.startsWith('close_')) {
+        const ticketNumber = parseInt(data.split('_')[1]);
+        const tickets = loadTickets();
+        const ticket = tickets[ticketNumber];
+        if (!ticket || ticket.status !== 'open') {
+            return bot.answerCallbackQuery(query.id, { text: 'Тикет не найден или закрыт.' });
+        }
+        
+        const code = Math.floor(1000 + Math.random() * 9000);
+        confirmCloseStates[userId] = { code, timer: null, ticketNumber };
+        const confirmMsg = await bot.sendMessage(chatId,
+            `Для подтверждения закрытия тикета #${ticketNumber} отправьте сообщение: ЗАКРЫТЬ ${code}. У вас 20 секунд.`
+        );
+        
+        const timer = setTimeout(() => {
+            delete confirmCloseStates[userId];
+            bot.editMessageText('Время вышло. Закрытие отменено.', {
+                chat_id: chatId,
+                message_id: confirmMsg.message_id
+            });
+        }, 20000);
+        confirmCloseStates[userId].timer = timer;
+        bot.answerCallbackQuery(query.id);
+        return;
+    }
+
+    
+    if (data.startsWith('rate_')) {
+        const parts = data.split('_');
+        const rate = parseInt(parts[1]);
+        const ticketNumber = parseInt(parts[2]);
+        const who = parts[3];
+
+        const ratings = loadRatings();
+        if (!ratings[ticketNumber]) ratings[ticketNumber] = {};
+
+        if (who === 'user') {
+            ratings[ticketNumber].userRating = rate === 0 ? null : rate;
+            await bot.sendMessage(chatId, 'Спасибо за оценку!');
+        } else if (who === 'helper') {
+            ratings[ticketNumber].helperRating = rate === 0 ? null : rate;
+            const tickets = loadTickets();
+            const ticket = tickets[ticketNumber];
+            if (ticket && ticket.topicId) {
+                await bot.sendMessage(SUPPORT_CHAT_ID, `Оператор оценил пользователя на ${rate} ★`, {
+                    message_thread_id: ticket.topicId
+                });
+            }
+            await bot.sendMessage(chatId, 'Оценка сохранена.');
+        }
+        saveRatings(ratings);
+
+        try {
+            await bot.deleteMessage(chatId, query.message.message_id);
+        } catch (e) {
+            console.error('Не удалось удалить сообщение с оценкой:', e);
+        }
+
+        bot.answerCallbackQuery(query.id);
+        return;
+    }
+});
+
+async function closeTicket(ticketNumber, userId, closedBy) {
+    const tickets = loadTickets();
+    const ticket = tickets[ticketNumber];
+    if (!ticket || ticket.status === 'closed') return;
+
+    
+    ticket.status = 'closed';
+    ticket.closedAt = new Date().toISOString();
+    ticket.closedBy = userId;
+    tickets[ticketNumber] = ticket;
+    saveTickets(tickets);
+
+    
+    try {
+        const topicName = `❌ Тикет #${ticketNumber}: ${ticket.topic.substring(0, 30)}`;
+        await bot.setForumTopicTitle(SUPPORT_CHAT_ID, ticket.topicId, topicName);
+    } catch (e) {}
+
+    
+    const userChatId = ticket.userId;
+    const userMsg = `Тикет #${ticketNumber} закрыт.`;
+    await bot.sendMessage(userChatId, userMsg);
+
+    
+    const rateKeyboard = {
+        inline_keyboard: [
+            [
+                { text: '⭐ 1', callback_data: `rate_1_${ticketNumber}_user` },
+                { text: '⭐ 2', callback_data: `rate_2_${ticketNumber}_user` },
+                { text: '⭐3', callback_data: `rate_3_${ticketNumber}_user` },
+                { text: '⭐4', callback_data: `rate_4_${ticketNumber}_user` },
+                { text: '⭐ 5', callback_data: `rate_5_${ticketNumber}_user` }
+            ],
+            [{ text: '❌ Отказаться', callback_data: `rate_0_${ticketNumber}_user` }]
+        ]
+    };
+    await bot.sendMessage(userChatId, 'Оцените, пожалуйста, работу службы поддержки (от 1 до 5):', { reply_markup: rateKeyboard });
+
+    
+    if (closedBy !== ticket.userId) { 
+        const helperKeyboard = {
+            inline_keyboard: [
+                [
+                    { text: '⭐ 1', callback_data: `rate_1_${ticketNumber}_helper` },
+                    { text: '⭐ 2', callback_data: `rate_2_${ticketNumber}_helper` },
+                    { text: '⭐ 3', callback_data: `rate_3_${ticketNumber}_helper` },
+                    { text: '⭐ 4', callback_data: `rate_4_${ticketNumber}_helper` },
+                    { text: '⭐ 5', callback_data: `rate_5_${ticketNumber}_helper` }
+                ],
+                [{ text: '❌ Отказаться', callback_data: `rate_0_${ticketNumber}_helper` }]
+            ]
+        };
+        await bot.sendMessage(SUPPORT_CHAT_ID, 'Оцените пользователя (от 1 до 5):', {
+            message_thread_id: ticket.topicId,
+            reply_markup: helperKeyboard
+        });
+    }
+
+    
+    delete confirmCloseStates[userId];
+}
+
+
+bot.on('message', async (msg) => {
+    
+    if (msg.chat.id !== parseInt(SUPPORT_CHAT_ID)) return;
+    if (!msg.message_thread_id) return;
+    if (msg.from.is_bot) return;
+
+    const state = confirmCloseStates[msg.from.id];
+    if (state && msg.text === `ЗАКРЫТЬ ${state.code}`) {
+        clearTimeout(state.timer);
+        delete confirmCloseStates[msg.from.id];
+        await closeTicket(state.ticketNumber, msg.from.id, 'helper');
+        return;
+    }
+
+    
+    const tickets = loadTickets();
+    const ticket = Object.values(tickets).find(t => t.topicId === msg.message_thread_id && t.status === 'open');
+    if (!ticket) return;
+
+    
+    const admins = await bot.getChatAdministrators(SUPPORT_CHAT_ID);
+    const isAdmin = admins.some(a => a.user.id === msg.from.id);
+
+    if (isAdmin) {
+        
+        const text = msg.text || '';
+        
+        
+        if (text.startsWith('/close')) return;
+        if (text.match(/^ЗАКРЫТЬ \d{4}$/)) return;
+
+        
+        try {
+            let forwardText = '<b>Ответ помощника</b>\n\n';
+            if (msg.text) forwardText += msg.text;
+            if (msg.caption) forwardText += msg.caption;
+
+            await bot.sendMessage(ticket.userId, forwardText, { parse_mode: 'HTML' });
+
+           
+            if (msg.photo) {
+                const largestPhoto = msg.photo[msg.photo.length - 1];
+                await bot.sendPhoto(ticket.userId, largestPhoto.file_id, {
+                    caption: '<b>Ответ помощника</b>',
+                    parse_mode: 'HTML'
+                });
+            } else {
+                
+                const forwardText = '<b>Ответ помощника</b>\n\n' + (msg.text || msg.caption || '');
+                await bot.sendMessage(ticket.userId, forwardText, { parse_mode: 'HTML' });
+            }
+
+
+            if (msg.video) {
+                await bot.sendVideo(ticket.userId, msg.video.file_id, {
+                    caption: msg.text || msg.caption || 'Ответ помощника'
+                });
+            }
+            if (msg.document) {
+                await bot.sendDocument(ticket.userId, msg.document.file_id, {
+                    caption: msg.text || msg.caption || 'Ответ помощника'
+                });
+            }
+            if (msg.audio) {
+                await bot.sendAudio(ticket.userId, msg.audio.file_id, {
+                    caption: msg.text || msg.caption || 'Ответ помощника'
+                });
+            }
+            if (msg.animation) {
+                await bot.sendAnimation(ticket.userId, msg.animation.file_id, {
+                    caption: msg.text || msg.caption || 'Ответ помощника'
+                });
+            }
+        } catch (e) {
+            console.error('Не удалось переслать ответ помошника:', e);
+        }
+        return;
+    }
+    return;
+});
+
+
