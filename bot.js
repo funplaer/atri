@@ -13,6 +13,12 @@ const USER_LOG_DIR = path.join(__dirname, 'user_logs');
 
 if (!fs.existsSync(CHAT_LOG_DIR)) fs.mkdirSync(CHAT_LOG_DIR);
 if (!fs.existsSync(USER_LOG_DIR)) fs.mkdirSync(USER_LOG_DIR);
+const SUPPORT_DATA_DIR = path.join(__dirname, 'support_data');
+
+if (!fs.existsSync(SUPPORT_DATA_DIR)) fs.mkdirSync(SUPPORT_DATA_DIR);
+
+const TICKETS_FILE = path.join(SUPPORT_DATA_DIR, 'tickets.json');
+const RATINGS_FILE = path.join(SUPPORT_DATA_DIR, 'ratings.json');
 
 //настройки
 const modchatID = '-1003903224584';
@@ -28,12 +34,10 @@ const quickMuteDuration = '3h';
 /* const modChatMode = false; */
 
 
-// === Настройки поддержки ===
+// поддержка
 const SUPPORT_CHAT_ID = '-1003986752214';
-const TICKETS_FILE = path.join(__dirname, 'tickets.json');
-const RATINGS_FILE = path.join(__dirname, 'ratings.json');
 
-// === Состояния для создания тикета ===
+
 const ticketCreationStates = {};
 const confirmCloseStates = {}; 
 
