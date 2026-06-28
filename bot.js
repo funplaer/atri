@@ -2081,7 +2081,7 @@ bot.on('message', async (msg) => {
             }
             state.topic = topic;
             state.step = 'awaiting_description';
-            return bot.sendMessage(chatId, 'Теперь опишите проблему подробно (не более 800 символов). Вы можете прикрепить до 5 медиафайлов.');
+            return bot.sendMessage(chatId, 'Теперь опишите проблему подробно (не более 800 символов). Не прикрепляйте медиафаылы. Вы сможете сделать это позже при помощи кнопки "отправить дополнительно" ');
         }
 
         if (state.step === 'awaiting_description') {
@@ -2847,7 +2847,7 @@ bot.on('callback_query', async (query) => {
         }
         
         ticketCreationStates[userId] = { step: 'extra_message', ticketNumber };
-        bot.sendMessage(chatId, 'Отправьте дополнительное сообщение (до 800 символов) и до 5 медиафайлов.');
+        bot.sendMessage(chatId, 'Отправьте дополнительное сообщение (до 800 символов) и до 5 медиафайлов. Фото обязательно отправляять как файл!!!');
         bot.answerCallbackQuery(query.id);
         return;
     }
@@ -3025,11 +3025,7 @@ bot.on('message', async (msg) => {
                     caption: '<b>Ответ помощника</b>',
                     parse_mode: 'HTML'
                 });
-            } else {
-                
-                const forwardText = '<b>Ответ помощника</b>\n\n' + (msg.text || msg.caption || '');
-                await bot.sendMessage(ticket.userId, forwardText, { parse_mode: 'HTML' });
-            }
+            } 
 
 
             if (msg.video) {
