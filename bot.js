@@ -1,4 +1,4 @@
-const TelegramBot = require('node-telegram-bot-api');
+const { TelegramBot } = require('node-telegram-bot-api');
 const fs = require('fs');
 const path = require('path');
 const { send } = require('process');
@@ -19,10 +19,10 @@ if (!fs.existsSync(SUPPORT_DATA_DIR)) fs.mkdirSync(SUPPORT_DATA_DIR);
 
 const TICKETS_FILE = path.join(SUPPORT_DATA_DIR, 'tickets.json');
 const RATINGS_FILE = path.join(SUPPORT_DATA_DIR, 'ratings.json');
-
+const temporaryRestrictions = {};
+const reportStates = {};
 //настройки
 const modchatID = '-1003903224584';
-const reportStates = {};
 const commandCd = 15;
 const warnExpireTime = '1M';
 const warnPunishmentCount = 3;
@@ -31,13 +31,20 @@ const warnPunishment = {
     duration: 'null' // null = навсегда
 };
 const quickMuteDuration = '3h';
-/* const modChatMode = false; */
+const autoComment = true; 
+const autoCommentTextDefault = 'Приветка, Комментатор! \nУ нас в чатике есть правила, не нарушай их пожалуйста! \n\n Краткие правила чата - https://t.me/c/1855698987/31445 \n\n Полные правила чата - https://telegra.ph/PRAVILA-DIP-CHAT-OT-29-IYUNYA-2026-GODA-06-29';
+let autoCommentText = 'Приветка, Комментатор! \nУ нас в чатике есть правила, не нарушай их пожалуйста! \n\n Краткие правила чата - https://t.me/c/1855698987/31445 \n\n Полные правила чата - https://telegra.ph/PRAVILA-DIP-CHAT-OT-29-IYUNYA-2026-GODA-06-29';
+const autoCommentTextEnd = '\n\nПриятного общения в чате, милаха!'
+const allowKickme = true;
+const mediaRestrictionEnabled = false;
+const mediaRestrictionDuration = "2m";
+
+
+
 
 
 // поддержка
-const SUPPORT_CHAT_ID = '-1003986752214';
-
-
+const supportChat = '-1003986752214';
 const ticketCreationStates = {};
 const confirmCloseStates = {}; 
 
@@ -482,11 +489,13 @@ async function disableRaidMode(chatId) {
         });
 
         bot.sendMessage(chatId, 'Я отключила режим агрессивного антиспама и антиреда.');
-    } catch (e) {bot.sendMessage(chatId, 'Простите, я не смогла деактивировать режим агрессивного антиспама и антирейда. Я правда пыталась, но что-то пошло не так((')
+    } catch (e) {bot.sendMessage(chatId, 'Простите, я не смогла деактивировать режим агрессивного антиспама и антирейда. Я правда пыталась, но что-то пошло не так(( \n Деактивируйте его вручную, разрешив пользователям отправлять сообщения и удалив меня из чата!')
         console.error('RaidMode disable error:', e);
         return bot.sendSticker(chatId, 'CAACAgIAAxkBAAEW4xFp3TsFwtS0nT6OivaNRZQ8OmArcwACJVcAAtkTIUlsu94nV6R8wDsE')
     }
 }
+
+
 
 
 //команды
@@ -503,7 +512,7 @@ bot.onText(/\/start/, (msg) => {
 bot.onText(/\/commands/, async (msg) => {
     const chatId = msg.chat.id;
     if(msg.chat.type === 'private') {
-        return bot.sendMessage(chatId, 'Вот, что я умею: \n   <b>/user</b> — узнать информацию о себе \n   <b>/report</b> — сообщить о нарушителе в чате (ответом на его сообщение) \n   <b>/help</b> — создать запрос в службу поддержки бота', {parse_mode: 'HTML'})
+        return bot.sendMessage(chatId, 'Вот, что я умею: \n <b>/help</b> — создать запрос в службу поддержки бота \n\nДля того, чтобы узнать больше о моих возможностях, используйте эту команду в чате, и в чате, в котором у вас есть права администратора, либо загляните на сайт atribot.ru (Сайт в процессе разработки) (!!ПОСЛЕ ОТКРЫТИЯ САЙТА ТЕКСТ В СКОБКАХ УДАЛИТЬ!!)', {parse_mode: 'HTML'})
     }
     const userId = msg.from.id;
     const admins = await bot.getChatAdministrators(chatId);
@@ -609,6 +618,7 @@ bot.onText(/\/mute(?:\s+(.+))?/, async (msg,match) => {
                                     can_send_polls: false,
                                     can_send_other_messages: false,
                                     can_add_web_page_previews: false,
+                                    can_react_to_messages: false
                                 },                            
                                 until_date: untilDate
                             });
@@ -673,7 +683,7 @@ bot.onText(/\/mute(?:\s+(.+))?/, async (msg,match) => {
 
                             saveUserLogs(targetId, ulogs);
                         } catch (err) {
-                            bot.sendMessage(chatId, 'Простите, я не смогла запретить этому пользователю писать в чат. Я правда пыталась, но что-то пошло не так', { reply_to_message_id: msg.message_id})
+                            bot.sendMessage(chatId, 'Простите, я не смогла запретить этому пользователю писать в чат. Я правда пыталась, но что-то пошло не так((', { reply_to_message_id: msg.message_id})
                             return bot.sendSticker(chatId, 'CAACAgIAAxkBAAEW4xFp3TsFwtS0nT6OivaNRZQ8OmArcwACJVcAAtkTIUlsu94nV6R8wDsE', { reply_to_message_id: msg.message_id})
                         }
                     } else {
@@ -738,7 +748,8 @@ bot.onText(/\/unmute(?:\s+(.+))?/, async (msg, match) => {
                     can_send_media_messages: true,
                     can_send_polls: true,
                     can_send_other_messages: true,
-                    can_add_web_page_previews: true
+                    can_add_web_page_previews: true,
+                    can_react_to_messages: true
                 });
 
                 const target = await bot.getChatMember(chatId, targetId);
@@ -775,7 +786,7 @@ bot.onText(/\/unmute(?:\s+(.+))?/, async (msg, match) => {
 
             } catch (err) {
                 console.error(err, '3');
-                bot.sendMessage(chatId, 'Простите, я не смогла снять ограничения. Я правда пыталась, но что-то пошло не так', { reply_to_message_id: msg.message_id});
+                bot.sendMessage(chatId, 'Простите, я не смогла снять ограничения. Я правда пыталась, но что-то пошло не так((', { reply_to_message_id: msg.message_id});
                 return bot.sendSticker(chatId, 'CAACAgIAAxkBAAEW4xFp3TsFwtS0nT6OivaNRZQ8OmArcwACJVcAAtkTIUlsu94nV6R8wDsE', { reply_to_message_id: msg.message_id})
             }
             lastcommand = 0;
@@ -789,19 +800,20 @@ bot.onText(/\/kickme/, async (msg) => {
     if(msg.chat.type === 'private' || msg.chat.type === 'channel') {
         return bot.sendMessage(chatId, 'Я могу сделать это только в группе')
     }
+    if(!allowKickme) return bot.sendMessage(chatId, 'Мне запретили выгонять людей из этого чата по их желанию. Давайте попробуем решить всё мирно? Если совсем никак, то выйдите из чата сами((')
     const admins = await bot.getChatAdministrators(chatId);
     const userId = msg.from.id;
     const isAdmin = admins.some(admin => admin.user.id === userId);    
         if(isAdmin) {
-            return bot.sendMessage(chatId, 'От админства не так-то просто отделаться, страдай дальше', { reply_to_message_id: msg.message_id})
+            return bot.sendMessage(chatId, 'От админства не так-то просто отделаться, страдай дальше))', { reply_to_message_id: msg.message_id})
         } else {
             try {                 
                 bot.banChatMember(chatId, msg.from.id)
-                bot.sendMessage(chatId, 'Пока-пока', { reply_to_message_id: msg.message_id})
+                bot.sendMessage(chatId, 'Пока-пока((', { reply_to_message_id: msg.message_id})
                 bot.unbanChatMember(chatId, msg.from.id)            
             } catch(e) {
                 console.error(e)
-                bot.sendMessage(chatId, 'Простите, я не смогла этого сделать. Я правда пыталась, но что-то пошло не так', { reply_to_message_id: msg.message_id})
+                bot.sendMessage(chatId, 'Простите, я не смогла этого сделать. Я правда пыталась, но что-то пошло не так((', { reply_to_message_id: msg.message_id})
                 return bot.sendSticker(chatId, 'CAACAgIAAxkBAAEW4xFp3TsFwtS0nT6OivaNRZQ8OmArcwACJVcAAtkTIUlsu94nV6R8wDsE', { reply_to_message_id: msg.message_id})
             }
         }
@@ -955,7 +967,7 @@ bot.onText(/\/ban(?:\s+(.+))?/, async (msg, match) => {
 
             } catch (e) {
                 console.error(e);
-                bot.sendMessage(chatId, 'Простите, я не смогла заблокировать этого пользователя. Я правда старалась, но что-то пошло не так', {
+                bot.sendMessage(chatId, 'Простите, я не смогла заблокировать этого пользователя. Я правда старалась, но что-то пошло не так((', {
                     reply_to_message_id: msg.message_id
                 });
                 return bot.sendSticker(chatId, 'CAACAgIAAxkBAAEW4xFp3TsFwtS0nT6OivaNRZQ8OmArcwACJVcAAtkTIUlsu94nV6R8wDsE', { reply_to_message_id: msg.message_id})
@@ -1057,7 +1069,7 @@ bot.onText(/\/unban(?:\s+(.+))?/, async (msg, match) => {
 
         } catch (err) {
             console.error(err);
-            return bot.sendMessage(chatId, 'Простите, я не смогла разблокировать пользователя. Я правда пыталась, но что-то пошло не так', {
+            return bot.sendMessage(chatId, 'Простите, я не смогла разблокировать пользователя. Я правда пыталась, но что-то пошло не так((', {
                 reply_to_message_id: msg.message_id
             });
         }
@@ -1141,7 +1153,7 @@ bot.onText(/\/note(?:\s+(.+))?/, async (msg, match) => {
 
         } catch (e) {
             console.error(e, '4');
-            bot.sendMessage(chatId, 'Простите, я не смогла записать информацию о пользователе. Я правда пыталась, но что-то пошло не так', { reply_to_message_id: msg.message_id})
+            bot.sendMessage(chatId, 'Простите, я не смогла записать информацию о пользователе. Я правда пыталась, но что-то пошло не так((', { reply_to_message_id: msg.message_id})
             return bot.sendSticker(chatId, 'CAACAgIAAxkBAAEW4xFp3TsFwtS0nT6OivaNRZQ8OmArcwACJVcAAtkTIUlsu94nV6R8wDsE', { reply_to_message_id: msg.message_id})
         }
         lastcommand = 0;
@@ -1229,7 +1241,7 @@ bot.onText(/\/unnote (\d+)(?:\s+(.+))?/, async (msg, match) => {
 
         } catch (e) {
             console.error(e, '5');
-            bot.sendMessage(chatId, 'Простите, я не смогла стереть эту заметку у пользователя. Я правда пыталась, но что-то пошло не так', { reply_to_message_id: msg.message_id})
+            bot.sendMessage(chatId, 'Простите, я не смогла стереть эту заметку у пользователя. Я правда пыталась, но что-то пошло не так((', { reply_to_message_id: msg.message_id})
             return bot.sendSticker(chatId, 'CAACAgIAAxkBAAEW4xFp3TsFwtS0nT6OivaNRZQ8OmArcwACJVcAAtkTIUlsu94nV6R8wDsE', { reply_to_message_id: msg.message_id})
         }
         lastcommand = 0;
@@ -1481,7 +1493,7 @@ bot.onText(/\/user(?:\s+(.+))?/, async (msg, match) => {
                     });
                 } catch (e) {
                     console.error('Send to modchat error:', e);
-                    return bot.sendMessage(chatId, 'Я не смогла отправить информацию в чат модерации. Проверьте, что я добавлена туда и у меня есть права, либо используйте команду без флага -mc', { 
+                    return bot.sendMessage(chatId, 'Я не смогла отправить информацию в чат модерации. Проверьте, что я добавлена туда и у меня есть права отправлять сообщения, либо используйте команду без флага -mc', { 
                         reply_to_message_id: msg.message_id 
                     });
                 }
@@ -1495,7 +1507,7 @@ bot.onText(/\/user(?:\s+(.+))?/, async (msg, match) => {
 
         } catch (err) {
             console.error(err, '6');
-            bot.sendMessage(chatId, 'Простите, я не смогла получить данные о пользователе. Я правда пыталась, но что-то пошло не так', { reply_to_message_id: msg.message_id});
+            bot.sendMessage(chatId, 'Простите, я не смогла получить данные о пользователе. Я правда пыталась, но что-то пошло не так((', { reply_to_message_id: msg.message_id});
             return bot.sendSticker(chatId, 'CAACAgIAAxkBAAEW4xFp3TsFwtS0nT6OivaNRZQ8OmArcwACJVcAAtkTIUlsu94nV6R8wDsE', { reply_to_message_id: msg.message_id})
         }
     }
@@ -1689,7 +1701,7 @@ bot.onText(/\/warn(?:\s+(.+))?/, async (msg, match) => {
 
         bot.sendMessage(
             chatId,
-            'Простите, я не смогла выдать предупреждение этому пользователю. Я правда пыталась, но что-то пошло не так',
+            'Простите, я не смогла выдать предупреждение этому пользователю. Я правда пыталась, но что-то пошло не так((',
             { reply_to_message_id: msg.message_id }
             
         );
@@ -1799,7 +1811,7 @@ bot.onText(/\/unwarn\s+(\d+)(?:\s+(.+))?/, async (msg, match) => {
         console.error(e);
         bot.sendMessage(
             chatId,
-            'Простите, я не смогла снять это предупреждение у пользователя. Я правда пыталась, но что-то пошло не так',
+            'Простите, я не смогла снять это предупреждение у пользователя. Я правда пыталась, но что-то пошло не так((',
             { reply_to_message_id: msg.message_id }
             
         );
@@ -1981,7 +1993,7 @@ bot.onText(/\/help/, async (msg) => {
 
     
     if (msg.chat.type !== 'private') {
-        return bot.sendMessage(chatId, 'Для создания обращения напишите /help в личные сообщения боту.', {
+        return bot.sendMessage(chatId, 'Для создания обращения напишите /help мне в личные сообщения', {
             reply_to_message_id: msg.message_id
         });
     }
@@ -2018,14 +2030,14 @@ bot.onText(/\/tickets/, async (msg) => {
 bot.onText(/\/close/, async (msg) => {
     const chatId = msg.chat.id;
 
-    if (chatId !== parseInt(SUPPORT_CHAT_ID) || !msg.message_thread_id) {
+    if (chatId !== parseInt(supportChat) || !msg.message_thread_id) {
         return;
     }
 
     const admins = await bot.getChatAdministrators(chatId);
     const isAdmin = admins.some(a => a.user.id === msg.from.id);
     if (!isAdmin) {
-        return bot.sendMessage(chatId, 'Только операторы могут закрыть тикет.', {
+        return bot.sendMessage(chatId, 'Только операторы поддержки могут закрыть тикет командой. Для закрытия тикета воспользуйтесь одноимённой кнопкой под сообщением о созданном тикете.', {
             message_thread_id: msg.message_thread_id
         });
     }
@@ -2055,7 +2067,7 @@ bot.onText(/\/close/, async (msg) => {
     const timer = setTimeout(async () => {
         delete confirmCloseStates[msg.from.id];
         try {
-            await bot.editMessageText('⏰ Время вышло. Закрытие отменено.', {
+            await bot.editMessageText('Время вышло. Закрытие отменено.', {
                 chat_id: chatId,
                 message_id: confirmMsg.message_id,
                 message_thread_id: msg.message_thread_id
@@ -2085,7 +2097,7 @@ bot.on('message', async (msg) => {
             }
             state.topic = topic;
             state.step = 'awaiting_description';
-            return bot.sendMessage(chatId, 'Теперь опишите проблему подробно (не более 800 символов). Не прикрепляйте медиафаылы. Вы сможете сделать это позже при помощи кнопки "отправить дополнительно" ');
+            return bot.sendMessage(chatId, 'Теперь опишите проблему подробно (не более 800 символов).\n\n Не прикрепляйте медиафайлы, вы сможете сделать это позже при помощи кнопки "отправить дополнительно" ');
         }
 
         if (state.step === 'awaiting_description') {
@@ -2111,7 +2123,7 @@ bot.on('message', async (msg) => {
                 if (!state.media) state.media = [];
                 state.media.push(...media);
                 if (state.media.length > 5) {
-                    return bot.sendMessage(chatId, 'Не более 5 медиафайлов. Уберите лишние.');
+                    return bot.sendMessage(chatId, 'Не более 5 медиафайлов. Уберите пожалуйста лишние.');
                 }
             }
 
@@ -2166,7 +2178,7 @@ bot.on('message', async (msg) => {
 
         if (description) {
             let content = `<b>Дополнительное сообщение от пользователя:</b>\n\n${description}`;
-            await bot.sendMessage(SUPPORT_CHAT_ID, content, {
+            await bot.sendMessage(supportChat, content, {
                 message_thread_id: ticket.topicId,
                 parse_mode: 'HTML'
             });
@@ -2175,14 +2187,14 @@ bot.on('message', async (msg) => {
         if (media.length > 0) {
     for (const m of media) {
         try {
-            await bot.sendMessage(SUPPORT_CHAT_ID, '', {
+            await bot.sendMessage(supportChat, '', {
                 message_thread_id: ticket.topicId,
                 [m.type]: m.file_id
             });
         } catch (err) {
             console.error('Ошибка отправки медиа:', err);
             try {
-                await bot.sendDocument(SUPPORT_CHAT_ID, m.file_id, {
+                await bot.sendDocument(supportChat, m.file_id, {
                     message_thread_id: ticket.topicId,
                     caption: 'Вложение'
                 });
@@ -2349,6 +2361,121 @@ if (joinTracker[chatId].length >= 5) {
 
     } catch (e) {
         console.error('Raid detector error:', e);
+    }
+});
+ 
+bot.on('message', async (msg) => {
+    if (msg.chat.type !== 'supergroup' && msg.chat.type !== 'group') return;
+    
+    if (!msg.forward_from_chat || msg.forward_from_chat.type !== 'channel') return;
+    
+    if (msg.edit_date) return;
+    
+    const chatId = msg.chat.id;
+    const messageId = msg.message_id;
+
+    if (autoComment && autoCommentText) {
+        bot.getChat(chatId)
+            .then(async(chat) => {
+                if (chat.linked_chat_id) {
+                    if(msg.forward_from_chat.id == chat.linked_chat_id) {
+                        try {
+                            
+                            const Dur = ParseDuration(mediaRestrictionDuration)
+                            if(mediaRestrictionEnabled) {autoCommentText += `\n\nЯ запретила отправлть медиа-сообщения и ставить реакции на ${formatDuration(Dur)} ${autoCommentTextEnd}`}
+                            else {autoCommentText += autoCommentTextEnd}
+                            await bot.sendMessage(chatId, autoCommentText, {
+                                reply_to_message_id: messageId
+                            });
+                            autoCommentText = autoCommentTextDefault;
+                            if (mediaRestrictionEnabled) {
+                                try {
+                                    const current = await bot.getChat(chatId);
+                                    const tempMediaRestPrem = {                                        
+                                        can_send_messages: true,
+                                        can_send_audios: false,
+                                        can_send_documents: false,
+                                        can_send_photos: false,
+                                        can_send_videos: false,
+                                        can_send_video_notes: false,
+                                        can_send_voice_notes: false,
+                                        can_send_polls: false,
+                                        can_send_other_messages: false,
+                                        can_react_to_messages: false
+                                                                                                           
+                                    }
+                                    await bot.setChatPermissions(chatId, tempMediaRestPrem);
+
+                                    if (!temporaryRestrictions[chatId]) {
+                                        temporaryRestrictions[chatId] = {};
+                                    }
+
+                                    temporaryRestrictions[chatId].mediaUntil =
+                                        Date.now() + ParseDuration(mediaRestrictionDuration) * 1000;        
+                                } catch (e) {
+                                    console.error("Media restriction enable error:", e);
+                                }
+                            }
+
+                                
+
+                            setInterval(async () => {
+                                
+                                const now = Date.now();
+
+                                for (const chatId of Object.keys(temporaryRestrictions)) {
+
+                                    const data = temporaryRestrictions[chatId];
+
+                                    try {                                     
+                                        if (data.mediaUntil && now >= data.mediaUntil) {
+
+                                            await bot.setChatPermissions(chatId, {
+                                                can_send_messages: true,
+                                                can_send_audios: true,
+                                                can_send_documents: true,
+                                                can_send_photos: true,
+                                                can_send_videos: true,
+                                                can_send_video_notes: true,
+                                                can_send_voice_notes: true,
+                                                can_send_polls: true,
+                                                can_send_other_messages: true,
+                                                can_react_to_messages: true
+                                            });
+
+                                            delete data.mediaUntil;
+
+                                            await bot.sendMessage(
+                                                chatId,
+                                                "Я разрешила отправлять медиа-сообщения и ставить реакции!",
+                                                { reply_to_message_id: messageId}
+                                            );
+                                        }
+
+                                        if (Object.keys(data).length === 0) {
+                                            delete temporaryRestrictions[chatId];
+                                        }
+
+                                    } catch (e) {
+                                        console.error("Temporary restriction error:", e);
+                                    }
+                                }
+
+                            }, 10000);
+
+
+                        } catch (e) {
+                            console.error('Ошибка отправки авто-комментария:', e);
+                        }
+                    }
+                
+                }
+            })
+            .catch((err) => {
+                console.error('Ошибка при получении чата:', err);
+            });
+        
+        
     }
 });
 
@@ -2667,7 +2794,7 @@ bot.on('callback_query', async (query) => {
         const data = query.data;
 
         if (!reportStates[messageId]) {
-            return bot.answerCallbackQuery(query.id, { text: 'Я не нашла такой репорт' });
+            return 
         }
 
         const state = reportStates[messageId];
@@ -2695,7 +2822,7 @@ bot.on('callback_query', async (query) => {
         }
 
         if (!report || !reportChatId) {
-            return bot.answerCallbackQuery(query.id, { text: 'Я не нашла такой репорт' });
+            return
         }
 
         if (report.checked) {
@@ -2786,11 +2913,12 @@ bot.on('callback_query', async (query) => {
         
         const userMsg = `Тикет #${ticketNumber} создан.\n` +
                         `Тема: ${ticket.topic}\n` +
-                        `Статус: открыт`;
+                        `Статус: открыт\n` + 
+                        `Для отправки сообщений оператору (в т.ч. для ответов на его сообщения) (в т.ч. для отправки медиафайлов) нажимайте кнопку "Отправить дополнительно". \n Вы можете закрепить это сообщение для удобства.`;
         const keyboard = {
             inline_keyboard: [
                 [
-                    { text: ' Отправить дополнительное сообщение', callback_data: `extra_${ticketNumber}` },
+                    { text: ' Отправить дополнительно', callback_data: `extra_${ticketNumber}` },
                     { text: 'Закрыть тикет', callback_data: `close_${ticketNumber}` }
                 ]
             ]
@@ -2800,21 +2928,21 @@ bot.on('callback_query', async (query) => {
         
         try {
             const topicName = `Тикет #${ticketNumber}: ${ticket.topic.substring(0, 30)}`;
-            const topic = await bot.createForumTopic(SUPPORT_CHAT_ID, topicName);
+            const topic = await bot.createForumTopic(supportChat, topicName);
             ticket.topicId = topic.message_thread_id;
             
             let content = `<b>Тема:</b> ${ticket.topic}\n<b>Описание:</b> ${ticket.description || '—'}\n<b>Срочность:</b> ${ticket.urgency}`;
             if (ticket.media.length) {
                 content += `\n<b>Вложения:</b> ${ticket.media.length} файлов`;
             }
-            await bot.sendMessage(SUPPORT_CHAT_ID, content, {
+            await bot.sendMessage(supportChat, content, {
                 message_thread_id: ticket.topicId,
                 parse_mode: 'HTML'
             });
             if (ticket.media.length > 0) {
                 for (const m of ticket.media) {
                     try {
-                        await bot.sendMessage(SUPPORT_CHAT_ID, '', {
+                        await bot.sendMessage(supportChat, '', {
                             message_thread_id: ticket.topicId,
                             [m.type]: m.file_id
                         });
@@ -2824,10 +2952,10 @@ bot.on('callback_query', async (query) => {
                 }
             }
             
-            const pinnedMsg = await bot.sendMessage(SUPPORT_CHAT_ID, 'Данный тикет открыт. Для помощи отвечайте в этой ветке.', {
+            const pinnedMsg = await bot.sendMessage(supportChat, 'Данный тикет открыт. Для помощи отвечайте в этой ветке.', {
                 message_thread_id: ticket.topicId
             });
-            await bot.pinChatMessage(SUPPORT_CHAT_ID, pinnedMsg.message_id, { message_thread_id: ticket.topicId });
+            await bot.pinChatMessage(supportChat, pinnedMsg.message_id, { message_thread_id: ticket.topicId });
 
             
             tickets[ticketNumber] = ticket;
@@ -2836,7 +2964,7 @@ bot.on('callback_query', async (query) => {
             bot.answerCallbackQuery(query.id, { text: 'Тикет создан!' });
         } catch (e) {
             console.error('Ошибка создания темы:', e);
-            bot.sendMessage(chatId, 'Не удалось создать тему в группе поддержки. Обратитесь к администратору.');
+            return bot.sendMessage(chatId, 'Не удалось создать тему в группе поддержки. Я правда пыталась, но что-то пошло не так. Обратитесь в личные сообщения администратора @holy_inquizitor');
         }
         return;
     }
@@ -2901,7 +3029,7 @@ bot.on('callback_query', async (query) => {
             const tickets = loadTickets();
             const ticket = tickets[ticketNumber];
             if (ticket && ticket.topicId) {
-                await bot.sendMessage(SUPPORT_CHAT_ID, `Оператор оценил пользователя на ${rate} ★`, {
+                await bot.sendMessage(supportChat, `Оператор оценил пользователя на ${rate} ★`, {
                     message_thread_id: ticket.topicId
                 });
             }
@@ -2934,8 +3062,8 @@ async function closeTicket(ticketNumber, userId, closedBy) {
 
     
     try {
-        const topicName = `❌ Тикет #${ticketNumber}: ${ticket.topic.substring(0, 30)}`;
-        await bot.setForumTopicTitle(SUPPORT_CHAT_ID, ticket.topicId, topicName);
+        const topicName = `Тикет #${ticketNumber}: ${ticket.topic.substring(0, 30)}`;
+        await bot.setForumTopicTitle(supportChat, ticket.topicId, topicName);
     } catch (e) {}
 
     
@@ -2972,7 +3100,7 @@ async function closeTicket(ticketNumber, userId, closedBy) {
                 [{ text: '❌ Отказаться', callback_data: `rate_0_${ticketNumber}_helper` }]
             ]
         };
-        await bot.sendMessage(SUPPORT_CHAT_ID, 'Оцените пользователя (от 1 до 5):', {
+        await bot.sendMessage(supportChat, 'Оцените пользователя (от 1 до 5):', {
             message_thread_id: ticket.topicId,
             reply_markup: helperKeyboard
         });
@@ -2985,7 +3113,7 @@ async function closeTicket(ticketNumber, userId, closedBy) {
 
 bot.on('message', async (msg) => {
     
-    if (msg.chat.id !== parseInt(SUPPORT_CHAT_ID)) return;
+    if (msg.chat.id !== parseInt(supportChat)) return;
     if (!msg.message_thread_id) return;
     if (msg.from.is_bot) return;
 
@@ -3003,7 +3131,7 @@ bot.on('message', async (msg) => {
     if (!ticket) return;
 
     
-    const admins = await bot.getChatAdministrators(SUPPORT_CHAT_ID);
+    const admins = await bot.getChatAdministrators(supportChat);
     const isAdmin = admins.some(a => a.user.id === msg.from.id);
 
     if (isAdmin) {
