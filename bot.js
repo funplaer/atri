@@ -499,7 +499,7 @@ async function disableRaidMode(chatId) {
 
 
 //команды
-bot.onText(/\/start/, (msg) => {
+bot.onText(/^\/start/, (msg) => {
     const chatId = msg.chat.id;
     
     if(lastcommand >= commandCd) {
@@ -509,7 +509,7 @@ bot.onText(/\/start/, (msg) => {
     };
     
 });
-bot.onText(/\/commands/, async (msg) => {
+bot.onText(/^\/commands/, async (msg) => {
     const chatId = msg.chat.id;
     if(msg.chat.type === 'private') {
         return bot.sendMessage(chatId, 'Вот, что я умею: \n <b>/help</b> — создать запрос в службу поддержки бота \n\nДля того, чтобы узнать больше о моих возможностях, используйте эту команду в чате, и в чате, в котором у вас есть права администратора, либо загляните на сайт atribot.ru (Сайт в процессе разработки) (!!ПОСЛЕ ОТКРЫТИЯ САЙТА ТЕКСТ В СКОБКАХ УДАЛИТЬ!!)', {parse_mode: 'HTML'})
@@ -795,7 +795,7 @@ bot.onText(/\/unmute(?:\s+(.+))?/, async (msg, match) => {
     }
     
 });
-bot.onText(/\/kickme/, async (msg) => {
+bot.onText(/^\/kickme/, async (msg) => {
     const chatId = msg.chat.id;
     if(msg.chat.type === 'private' || msg.chat.type === 'channel') {
         return bot.sendMessage(chatId, 'Я могу сделать это только в группе')
@@ -1513,7 +1513,7 @@ bot.onText(/\/user(?:\s+(.+))?/, async (msg, match) => {
     }
     
 });
-bot.onText(/\/RaidMode/i, async (msg) => {
+bot.onText(/^\/RaidMode/i, async (msg) => {
     const chatId = msg.chat.id;
     const userId = msg.from.id;
     if(msg.chat.type === 'private' || msg.chat.type === 'channel') {
@@ -1534,7 +1534,7 @@ bot.onText(/\/RaidMode/i, async (msg) => {
     }
     lastcommand = 0;
 });
-bot.onText(/\/unRaidMode/i, async (msg) => {
+bot.onText(/^\/unRaidMode/i, async (msg) => {
     const chatId = msg.chat.id;
     const userId = msg.from.id;
     if(msg.chat.type === 'private' || msg.chat.type === 'channel') {
@@ -1819,7 +1819,7 @@ bot.onText(/\/unwarn\s+(\d+)(?:\s+(.+))?/, async (msg, match) => {
     }
 });
 
-bot.onText(/\/report(?:\s+(.+))?/i, async (msg, match) => {
+bot.onText(/^\/report(?:\s+(.+))?/i, async (msg, match) => {
     const chatId = msg.chat.id;
 
     try {
@@ -1987,7 +1987,7 @@ bot.onText(/\/report(?:\s+(.+))?/i, async (msg, match) => {
         return bot.sendSticker(chatId, 'CAACAgIAAxkBAAEW4xFp3TsFwtS0nT6OivaNRZQ8OmArcwACJVcAAtkTIUlsu94nV6R8wDsE', { reply_to_message_id: msg.message_id})
     }
 });
-bot.onText(/\/help/, async (msg) => {
+bot.onText(/^\/help/, async (msg) => {
     const chatId = msg.chat.id;
     const userId = msg.from.id;
 
