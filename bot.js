@@ -4,7 +4,7 @@ const path = require('path');
 const { send } = require('process');
 
 
-const token = '8661483092:AAErD2D2dh5UEES51wqFZE1JB7Cs7iJAKOA'; 
+const token = '8661483092:AAFJzeZamaYRyoKSJpmSaxtsvKLqQpupETs'; 
 const bot = new TelegramBot(token, { polling: true });
 
 
@@ -24,27 +24,82 @@ const reportStates = {};
 const settingsInputStates = {};
 //настройки
 
+const SETTINGS_NAMES = {
+    modchatID: {
+        name: 'Чат модерации',
+        description: 'ID чата, куда будут отправляться репорты и другая модераторская информация'
+    },
+    commandCd: {
+        name: 'Задержка команд',
+        description: 'Минимальное время (в секундах) между использованием команд обычными пользователями, на команды для админов не влияет'
+    },
+    warnExpireTime: {
+        name: 'Срок автоматического снятия предупреждений',
+        description: 'Время, через которое предупреждения автоматически снимаются (m - минуты, h - часы, d - дни, M - месяцы)'
+    },
+    warnPunishmentCount: {
+        name: 'Лимит предупреждений',
+        description: 'Количество предупреждений, после которого применяется наказание'
+    },
+    'warnPunishment.type': {
+        name: 'Тип наказания за варны',
+        description: 'Что происходит при достижении лимита предупреждений: mute (запрет на отправку сообщений) или ban (блокировка)'
+    },
+    'warnPunishment.duration': {
+        name: 'Длительность наказания за варны',
+        description: 'На сколько блокировать/мутить пользователя при достижении лимита (null - навсегда, или время в формате m - минуты, h - часы, d - дни, M - месяцы)'
+    },
+    quickMuteDuration: {
+        name: 'Длительность быстрого мута',
+        description: 'Длительность мута через кнопку в репорте (m - минуты, h - часы, d - дни, M - месяцы)'
+    },
+    autoComment: {
+        name: 'Авто-комментарий',
+        description: 'Включить автоматический комментарий при посте сообщений из канала, если чат не является комментариями каналла, то выключите эту настройку.'
+    },
+    autoCommentText: {
+        name: 'Текст авто-комментария',
+        description: 'Текст, который будет отправлен при пересылке сообщений из канала'
+    },
+    autoCommentTextEnd: {
+        name: 'Концовка авто-комментария',
+        description: 'Текст, который добавляется в конец авто-комментария'
+    },
+    allowKickme: {
+        name: 'Разрешить /kickme',
+        description: 'Разрешить пользователям выгонять себя из чата командой /kickme'
+    },
+    mediaRestrictionEnabled: {
+        name: 'Ограничение медиа',
+        description: 'Включить временное ограничение на отправку медиа-файлов после авто-комментария'
+    },
+    mediaRestrictionDuration: {
+        name: 'Длительность ограничения медиа',
+        description: 'На сколько запрещать отправку медиа-файлов после авто-комментария (m - минуты, h - часы, d - дни, M - месяцы)'
+    }
+};
+
 
 const SETTINGS_DIR = path.join(__dirname, 'chat_settings');
 
 if (!fs.existsSync(SETTINGS_DIR)) fs.mkdirSync(SETTINGS_DIR);
 
 const defaultSettings = {
-    modchatID: null, // ID чата модерации
-    commandCd: 15, // КД команд в секундах
-    warnExpireTime: '1M', // Время снятия предупреждений
-    warnPunishmentCount: 3, // Количество варнов до наказания
+    modchatID: null, 
+    commandCd: 15,
+    warnExpireTime: '1M',
+    warnPunishmentCount: 3, 
     warnPunishment: {
-        type: 'mute', // mute или ban
-        duration: null // null = навсегда
+        type: 'mute', 
+        duration: null 
     },
-    quickMuteDuration: '3h', // Длительность быстрого мута из репорта
-    autoComment: true, // Включить авто-комментарий
+    quickMuteDuration: '3h', 
+    autoComment: false, 
     autoCommentText: 'Если вы видите этот текст, то вы не настроили текст авто-комментария в боте. Настройте его, используя /settings или выключите настройку autocomment', // Текст авто-комментария
-    autoCommentTextEnd: '\n\nПриятного вам использования бота', // Конец авто-комментария
-    allowKickme: false, // Разрешить /kickme
-    mediaRestrictionEnabled: false, // Включить ограничение медиа
-    mediaRestrictionDuration: '2m', // Длительность ограничения медиа   
+    autoCommentTextEnd: '\n\nПриятного вам использования бота',
+    allowKickme: false,
+    mediaRestrictionEnabled: false,
+    mediaRestrictionDuration: '2m', 
 };
 
 function getSettingsFile(chatId) {
@@ -120,8 +175,157 @@ function getChatSettings(chatId) {
 function invalidateSettingsCache(chatId) {
     settingsCache.delete(chatId);
 }
+function getSettingType(value) {
+    if (typeof value === 'boolean') return 'boolean';
+    if (typeof value === 'number') return 'number';
+    if (value === null) return 'null';
+    return 'string';
+}
 
+function formatSettingValue(value) {
+    if (value === null) return 'Не установлено (null)';
+    if (typeof value === 'boolean') return value ? 'Включено' : 'Выключено';
+    if (typeof value === 'string' && value === '') return ' Не установлено (пусто)';
+    return String(value);
+}
 
+function getSettingDisplayName(key) {
+    return SETTINGS_NAMES[key]?.name || key;
+}
+
+function getSettingDescription(key) {
+    return SETTINGS_NAMES[key]?.description || 'Нет описания';
+}
+
+function getNestedValue(obj, key) {
+    if (key.includes('.')) {
+        const parts = key.split('.');
+        let current = obj;
+        for (const part of parts) {
+            if (current === undefined || current === null) return undefined;
+            current = current[part];
+        }
+        return current;
+    }
+    return obj[key];
+}
+
+async function showSettingsMenu(chatId, messageId = null) {
+    const settings = getChatSettings(chatId);
+    
+    let text = '<b>Настройки чата</b>\n\n';
+    text += 'Нажмите на кнопку с названием настройки, чтобы изменить её.\n\n';
+
+    const buttons = [];
+    const keys = Object.keys(SETTINGS_NAMES);
+    
+    const sortedKeys = keys.sort();
+    
+    for (const key of sortedKeys) {
+        const value = getNestedValue(settings, key);
+        const displayName = getSettingDisplayName(key);
+        const displayValue = formatSettingValue(value);
+        buttons.push([{ 
+            text: `${displayName}: ${displayValue}`, 
+            callback_data: `settings_edit_${key}` 
+        }]);
+    }
+
+    const keyboard = {
+        inline_keyboard: buttons
+    };
+
+    if (messageId) {
+        try {
+            await bot.editMessageText(text, {
+                chat_id: chatId,
+                message_id: messageId,
+                parse_mode: 'HTML',
+                reply_markup: keyboard
+            });
+            return { message_id: messageId };
+        } catch (e) {
+            console.error('Edit settings message error:', e);
+            const sent = await bot.sendMessage(chatId, text, {
+                parse_mode: 'HTML',
+                reply_markup: keyboard
+            });
+            return sent;
+        }
+    } else {
+        const sent = await bot.sendMessage(chatId, text, {
+            parse_mode: 'HTML',
+            reply_markup: keyboard
+        });
+        return sent;
+    }
+}
+
+async function showSettingEdit(chatId, messageId, key) {
+    const settings = getChatSettings(chatId);
+
+    const value = getNestedValue(settings, key);
+    const defaultValue = getNestedValue(defaultSettings, key);
+    const displayName = getSettingDisplayName(key);
+    const description = getSettingDescription(key);
+    const type = getSettingType(value);
+
+    let text = `<b>Настройка: ${displayName}</b>\n\n`;
+    text += `<b>Название переменной:</b> <code>${key}</code>\n`;
+    text += `<b>Текущее значение:</b> ${formatSettingValue(value)}\n`;
+    text += `<b>Значение по умолчанию:</b> ${formatSettingValue(defaultValue)}\n`;
+    text += `<b>Тип:</b> ${type}\n\n`;
+    text += `<b>Описание:</b> ${description}`;
+
+    const buttons = [];
+
+    if (type === 'boolean') {
+        buttons.push([
+            { text: 'Включить', callback_data: `settings_set_${key}_true` },
+            { text: 'Выключить', callback_data: `settings_set_${key}_false` }
+        ]);
+    } else {
+        buttons.push([
+            { text: 'Установить значение', callback_data: `settings_input_${key}` }
+        ]);
+    }
+
+    buttons.push([
+        { text: 'По умолчанию', callback_data: `settings_reset_${key}` },
+        { text: 'Назад', callback_data: 'settings_back' }
+    ]);
+
+    const keyboard = {
+        inline_keyboard: buttons
+    };
+
+    try {
+        await bot.editMessageText(text, {
+            chat_id: chatId,
+            message_id: messageId,
+            parse_mode: 'HTML',
+            reply_markup: keyboard
+        });
+    } catch (e) {
+        console.error('Edit setting error:', e);
+        const sent = await bot.sendMessage(chatId, text, {
+            parse_mode: 'HTML',
+            reply_markup: keyboard
+        });
+        if (settingsInputStates[chatId]) {
+            settingsInputStates[chatId].menuMessageId = sent.message_id;
+        }
+    }
+}
+
+async function checkAdmin(chatId, userId) {
+    try {
+        const admins = await bot.getChatAdministrators(chatId);
+        return admins.some(a => a.user.id === userId);
+    } catch {
+        return false;
+    }
+}
 
 
 
@@ -2172,6 +2376,39 @@ bot.onText(/\/close/, async (msg) => {
     }, 20000);
     confirmCloseStates[msg.from.id].timer = timer;
 });
+bot.onText(/^\/settings(?:\s+(.+))?/, async (msg, match) => {
+    const chatId = msg.chat.id;
+    const userId = msg.from.id;
+
+    if (msg.chat.type === 'private' || msg.chat.type === 'channel') {
+        return bot.sendMessage(chatId, 'Я могу сделать это только в группе');
+    }
+
+    try {
+        const admins = await bot.getChatAdministrators(chatId);
+        const isAdmin = admins.some(a => a.user.id === userId);
+
+        if (!isAdmin) {
+            return bot.sendMessage(chatId, 'Похоже вы не обладаете правами администратора в этом чате', {
+                reply_to_message_id: msg.message_id
+            });
+        }
+
+        const sent = await showSettingsMenu(chatId);
+        
+        if (!settingsInputStates[chatId]) {
+            settingsInputStates[chatId] = {};
+        }
+        settingsInputStates[chatId].menuMessageId = sent.message_id;
+
+    } catch (e) {
+        console.error('Settings error:', e);
+        bot.sendMessage(chatId, 'Простите, я не смогла открыть настройки. Я правда пыталась, но что-то пошло не так((', {
+            reply_to_message_id: msg.message_id
+        });
+        return bot.sendSticker(chatId, 'CAACAgIAAxkBAAEW4xFp3TsFwtS0nT6OivaNRZQ8OmArcwACJVcAAtkTIUlsu94nV6R8wDsE', { reply_to_message_id: msg.message_id})
+    }
+});
 
 
 
@@ -2857,268 +3094,424 @@ async function checkWarnPunishment(chatId, targetId) {
         console.error('WARN AUTO PUNISH ERROR:', e);
     }
 }
-
-bot.on('callback_query', async (query) => {
-    try {
-        const modChatId = query.message.chat.id; 
-        const messageId = query.message.message_id;
-        const data = query.data;
-
-        if (!reportStates[messageId]) {
-            return 
-        }
-
-        const state = reportStates[messageId];
-        const isAdmin = (await bot.getChatAdministrators(modChatId)).some(a => a.user.id === query.from.id);
-        if (!isAdmin) {
-            return bot.answerCallbackQuery(query.id, { text: 'Только модераторы могут это делать', show_alert: true });
-        }
-
-        
-        let report = null;
-        let reportChatId = null;
-        
-        const chatFiles = fs.readdirSync(CHAT_LOG_DIR);
-        for (const file of chatFiles) {
-            const chatId = file.replace('_logs.json', '');
-            const logs = loadLogs(chatId);
-            if (logs._reports) {
-                const found = logs._reports.find(r => r.reportMessageId === messageId);
-                if (found) {
-                    report = found;
-                    reportChatId = chatId;
-                    break;
-                }
-            }
-        }
-
-        if (!report || !reportChatId) {
-            return
-        }
-
-        if (report.checked) {
-            return bot.answerCallbackQuery(query.id, { text: 'Этот репорт уже обработан' });
-        }
-
-        if (data === 'report_done') {
-            markReportAsChecked(reportChatId, messageId, query.from.id);
-            
-            const oldText = query.message.text;
-            const newText = 'РЕПОРТ ПРОВЕРЕН (без наказания)\n\n' + oldText;
-            await bot.editMessageText(newText, {
-                chat_id: modChatId, 
-                message_id: messageId,
-                parse_mode: 'HTML',
-                disable_web_page_preview: true,
-                reply_markup: {} 
-            });
-            delete reportStates[messageId];
-            return bot.answerCallbackQuery(query.id, { text: 'Я отметила репорт как проверенный' });
-        }
-
-        const action = data;
-
-        if (state.pendingAction === action && Date.now() - state.lastPress < 3000) {
-            clearTimeout(state.timer);
-            state.pendingAction = null;
-            state.lastPress = null;
-            state.timer = null;
-            await executeQuickAction(query, action, reportChatId, messageId, report);
-            return;
-        } else {
-            if (state.timer) clearTimeout(state.timer);
-            state.pendingAction = action;
-            state.lastPress = Date.now();
-            state.timer = setTimeout(() => {
-                state.pendingAction = null;
-                state.lastPress = null;
-                state.timer = null;
-            }, 3000);
-            bot.answerCallbackQuery(query.id, { text: 'Нажмите ещё раз в течение 3 секунд для подтверждения' });
-            return;
-        }
-    } catch (e) {
-        console.error('Callback error:', e);
-        bot.answerCallbackQuery(query.id, { text: 'Ошибка' });
-    }
-});
-
-
 bot.on('callback_query', async (query) => {
     const chatId = query.message.chat.id;
     const userId = query.from.id;
     const data = query.data;
+    const messageId = query.message.message_id;
 
-    
-    if (data.startsWith('urgency_')) {
-        const urgencyMap = { high: 'Максимальная', medium: 'Умеренная', low: 'Низкая' };
-        const urgency = data.split('_')[1];
-        const state = ticketCreationStates[userId];
-        if (!state || state.step !== 'awaiting_urgency') {
-            return bot.answerCallbackQuery(query.id, { text: 'Что-то пошло не так. Попробуйте начать заново /help' });
-        }
-        state.urgency = urgencyMap[urgency] || 'Низкая';
-
-        
-        const ticketNumber = generateTicketNumber();
-        const ticket = {
-            ticketNumber,
-            userId: userId,
-            userName: query.from.first_name,
-            topic: state.topic,
-            description: state.description,
-            media: state.media || [],
-            urgency: state.urgency,
-            status: 'open',
-            createdAt: new Date().toISOString(),
-            topicId: null, 
-            messages: []
-        };
-
-        
-        const tickets = loadTickets();
-        tickets[ticketNumber] = ticket;
-        saveTickets(tickets);
-        delete ticketCreationStates[userId];
-
-        
-        const userMsg = `Тикет #${ticketNumber} создан.\n` +
-                        `Тема: ${ticket.topic}\n` +
-                        `Статус: открыт\n` + 
-                        `Для отправки сообщений оператору (в т.ч. для ответов на его сообщения) (в т.ч. для отправки медиафайлов) нажимайте кнопку "Отправить дополнительно". \n Вы можете закрепить это сообщение для удобства.`;
-        const keyboard = {
-            inline_keyboard: [
-                [
-                    { text: ' Отправить дополнительно', callback_data: `extra_${ticketNumber}` },
-                    { text: 'Закрыть тикет', callback_data: `close_${ticketNumber}` }
-                ]
-            ]
-        };
-        await bot.sendMessage(chatId, userMsg, { reply_markup: keyboard });
-
-        
+    if (data.startsWith('settings_')) {
         try {
-            const topicName = `Тикет #${ticketNumber}: ${ticket.topic.substring(0, 30)}`;
-            const topic = await bot.createForumTopic(supportChat, topicName);
-            ticket.topicId = topic.message_thread_id;
-            
-            let content = `<b>Тема:</b> ${ticket.topic}\n<b>Описание:</b> ${ticket.description || '—'}\n<b>Срочность:</b> ${ticket.urgency}`;
-            if (ticket.media.length) {
-                content += `\n<b>Вложения:</b> ${ticket.media.length} файлов`;
+            const admins = await bot.getChatAdministrators(chatId);
+            const isAdmin = admins.some(a => a.user.id === userId);
+
+            if (!isAdmin) {
+                return bot.answerCallbackQuery(query.id, {
+                    text: 'Только администраторы могут управлять настройками.',
+                    show_alert: true
+                });
             }
-            await bot.sendMessage(supportChat, content, {
-                message_thread_id: ticket.topicId,
-                parse_mode: 'HTML'
-            });
-            if (ticket.media.length > 0) {
-                for (const m of ticket.media) {
-                    try {
-                        await bot.sendMessage(supportChat, '', {
-                            message_thread_id: ticket.topicId,
-                            [m.type]: m.file_id
-                        });
-                    } catch (err) {
-                        console.error('Ошибка отправки медиа в тикете:', err);
+
+            await bot.answerCallbackQuery(query.id);
+
+            if (data === 'settings_back') {
+                await showSettingsMenu(chatId, messageId);
+                return;
+            }
+
+            if (data.startsWith('settings_edit_')) {
+                const key = data.replace('settings_edit_', '');
+                await showSettingEdit(chatId, messageId, key);
+                return;
+            }
+
+            if (data.startsWith('settings_reset_')) {
+                const key = data.replace('settings_reset_', '');
+                const defaultValue = getNestedValue(defaultSettings, key);
+                
+                updateChatSetting(chatId, key, defaultValue);
+                invalidateSettingsCache(chatId);
+                
+                await showSettingEdit(chatId, messageId, key);
+                return;
+            }
+
+            if (data.startsWith('settings_set_')) {
+                const parts = data.replace('settings_set_', '').split('_');
+                const key = parts.slice(0, -1).join('.');
+                const value = parts[parts.length - 1];
+                
+                let parsedValue;
+                if (value === 'true') parsedValue = true;
+                else if (value === 'false') parsedValue = false;
+                else parsedValue = value;
+
+                updateChatSetting(chatId, key, parsedValue);
+                invalidateSettingsCache(chatId);
+                
+                await showSettingEdit(chatId, messageId, key);
+                return;
+            }
+
+            if (data.startsWith('settings_input_')) {
+                const key = data.replace('settings_input_', '');
+                
+                if (!settingsInputStates[chatId]) {
+                    settingsInputStates[chatId] = {};
+                }
+                settingsInputStates[chatId].awaitingInput = {
+                    key: key,
+                    userId: userId,
+                    messageId: messageId
+                };
+
+                const displayName = getSettingDisplayName(key);
+                const settings = getChatSettings(chatId);
+                const currentValue = getNestedValue(settings, key);
+                const type = getSettingType(currentValue);
+                
+                let instructions = `<b>Введите новое значение для "${displayName}"</b>\n\n`;
+                instructions += `Текущее значение: ${formatSettingValue(currentValue)}\n`;
+                instructions += `Тип: ${type}\n\n`;
+                
+                if (type === 'string') {
+                    instructions += 'Просто отправьте текст в чат.\n';
+                } else if (type === 'number') {
+                    instructions += 'Введите число (например: 10, 30, 60).\n';
+                } else if (type === 'null') {
+                    instructions += 'Введите значение (текст или число), или напишите "null" чтобы установить пустое значение.\n';
+                }
+                
+                instructions += '\nЧтобы отменить, просто напишите /settings заново.';
+
+                await bot.editMessageText(instructions, {
+                    chat_id: chatId,
+                    message_id: messageId,
+                    parse_mode: 'HTML'
+                });
+                return;
+            }
+
+        } catch (e) {
+            console.error('Settings callback error:', e);
+            try {
+                await bot.answerCallbackQuery(query.id, {
+                    text: 'Ошибка',
+                    show_alert: true
+                });
+            } catch (err) {}
+        }
+        return;
+    }
+
+    try {
+        if (!reportStates[messageId]) {
+        } else {
+            const state = reportStates[messageId];
+            const isAdmin = (await bot.getChatAdministrators(chatId)).some(a => a.user.id === userId);
+            if (!isAdmin) {
+                return bot.answerCallbackQuery(query.id, { text: 'Только модераторы могут это делать', show_alert: true });
+            }
+
+            let report = null;
+            let reportChatId = null;
+            
+            const chatFiles = fs.readdirSync(CHAT_LOG_DIR);
+            for (const file of chatFiles) {
+                const chatIdFile = file.replace('_logs.json', '');
+                const logs = loadLogs(chatIdFile);
+                if (logs._reports) {
+                    const found = logs._reports.find(r => r.reportMessageId === messageId);
+                    if (found) {
+                        report = found;
+                        reportChatId = chatIdFile;
+                        break;
                     }
                 }
             }
-            
-            const pinnedMsg = await bot.sendMessage(supportChat, 'Данный тикет открыт. Для помощи отвечайте в этой ветке.', {
-                message_thread_id: ticket.topicId
-            });
-            await bot.pinChatMessage(supportChat, pinnedMsg.message_id, { message_thread_id: ticket.topicId });
 
-            
+            if (!report || !reportChatId) {
+                return;
+            }
+
+            if (report.checked) {
+                return bot.answerCallbackQuery(query.id, { text: 'Этот репорт уже обработан' });
+            }
+
+            if (data === 'report_done') {
+                markReportAsChecked(reportChatId, messageId, userId);
+                
+                const oldText = query.message.text;
+                const newText = 'РЕПОРТ ПРОВЕРЕН (без наказания)\n\n' + oldText;
+                await bot.editMessageText(newText, {
+                    chat_id: chatId,
+                    message_id: messageId,
+                    parse_mode: 'HTML',
+                    disable_web_page_preview: true,
+                    reply_markup: {}
+                });
+                delete reportStates[messageId];
+                return bot.answerCallbackQuery(query.id, { text: 'Я отметила репорт как проверенный' });
+            }
+
+            const action = data;
+
+            if (state.pendingAction === action && Date.now() - state.lastPress < 3000) {
+                clearTimeout(state.timer);
+                state.pendingAction = null;
+                state.lastPress = null;
+                state.timer = null;
+                await executeQuickAction(query, action, reportChatId, messageId, report);
+                return;
+            } else {
+                if (state.timer) clearTimeout(state.timer);
+                state.pendingAction = action;
+                state.lastPress = Date.now();
+                state.timer = setTimeout(() => {
+                    state.pendingAction = null;
+                    state.lastPress = null;
+                    state.timer = null;
+                }, 3000);
+                bot.answerCallbackQuery(query.id, { text: 'Нажмите ещё раз в течение 3 секунд для подтверждения' });
+                return;
+            }
+        }
+    } catch (e) {
+        console.error('Report callback error:', e);
+        bot.answerCallbackQuery(query.id, { text: 'Ошибка' });
+        return;
+    }
+
+    try {
+        if (data.startsWith('urgency_')) {
+            const urgencyMap = { high: 'Максимальная', medium: 'Умеренная', low: 'Низкая' };
+            const urgency = data.split('_')[1];
+            const state = ticketCreationStates[userId];
+            if (!state || state.step !== 'awaiting_urgency') {
+                return bot.answerCallbackQuery(query.id, { text: 'Что-то пошло не так. Попробуйте начать заново /help' });
+            }
+            state.urgency = urgencyMap[urgency] || 'Низкая';
+
+            const ticketNumber = generateTicketNumber();
+            const ticket = {
+                ticketNumber,
+                userId: userId,
+                userName: query.from.first_name,
+                topic: state.topic,
+                description: state.description,
+                media: state.media || [],
+                urgency: state.urgency,
+                status: 'open',
+                createdAt: new Date().toISOString(),
+                topicId: null,
+                messages: []
+            };
+
+            const tickets = loadTickets();
             tickets[ticketNumber] = ticket;
             saveTickets(tickets);
+            delete ticketCreationStates[userId];
 
-            bot.answerCallbackQuery(query.id, { text: 'Тикет создан!' });
-        } catch (e) {
-            console.error('Ошибка создания темы:', e);
-            return bot.sendMessage(chatId, 'Не удалось создать тему в группе поддержки. Я правда пыталась, но что-то пошло не так. Обратитесь в личные сообщения администратора @holy_inquizitor');
-        }
-        return;
-    }
+            const userMsg = `Тикет #${ticketNumber} создан.\n` +
+                            `Тема: ${ticket.topic}\n` +
+                            `Статус: открыт\n` +
+                            `Для отправки сообщений оператору (в т.ч. для ответов на его сообщения) (в т.ч. для отправки медиафайлов) нажимайте кнопку "Отправить дополнительно". \n Вы можете закрепить это сообщение для удобства.`;
+            const keyboard = {
+                inline_keyboard: [
+                    [
+                        { text: 'Отправить дополнительно', callback_data: `extra_${ticketNumber}` },
+                        { text: 'Закрыть тикет', callback_data: `close_${ticketNumber}` }
+                    ]
+                ]
+            };
+            await bot.sendMessage(chatId, userMsg, { reply_markup: keyboard });
 
-    
-    if (data.startsWith('extra_')) {
-        const ticketNumber = parseInt(data.split('_')[1]);
-        const tickets = loadTickets();
-        const ticket = tickets[ticketNumber];
-        if (!ticket || ticket.status !== 'open') {
-            return bot.answerCallbackQuery(query.id, { text: 'Тикет не найден или закрыт.' });
-        }
-        
-        ticketCreationStates[userId] = { step: 'extra_message', ticketNumber };
-        bot.sendMessage(chatId, 'Отправьте дополнительное сообщение (до 800 символов) и до 5 медиафайлов. Фото обязательно отправляять как файл!!!');
-        bot.answerCallbackQuery(query.id);
-        return;
-    }
-
-    
-    if (data.startsWith('close_')) {
-        const ticketNumber = parseInt(data.split('_')[1]);
-        const tickets = loadTickets();
-        const ticket = tickets[ticketNumber];
-        if (!ticket || ticket.status !== 'open') {
-            return bot.answerCallbackQuery(query.id, { text: 'Тикет не найден или закрыт.' });
-        }
-        
-        const code = Math.floor(1000 + Math.random() * 9000);
-        confirmCloseStates[userId] = { code, timer: null, ticketNumber };
-        const confirmMsg = await bot.sendMessage(chatId,
-            `Для подтверждения закрытия тикета #${ticketNumber} отправьте сообщение: ЗАКРЫТЬ ${code}. У вас 20 секунд.`
-        );
-        
-        const timer = setTimeout(() => {
-            delete confirmCloseStates[userId];
-            bot.editMessageText('Время вышло. Закрытие отменено.', {
-                chat_id: chatId,
-                message_id: confirmMsg.message_id
-            });
-        }, 20000);
-        confirmCloseStates[userId].timer = timer;
-        bot.answerCallbackQuery(query.id);
-        return;
-    }
-
-    
-    if (data.startsWith('rate_')) {
-        const parts = data.split('_');
-        const rate = parseInt(parts[1]);
-        const ticketNumber = parseInt(parts[2]);
-        const who = parts[3];
-
-        const ratings = loadRatings();
-        if (!ratings[ticketNumber]) ratings[ticketNumber] = {};
-
-        if (who === 'user') {
-            ratings[ticketNumber].userRating = rate === 0 ? null : rate;
-            await bot.sendMessage(chatId, 'Спасибо за оценку!');
-        } else if (who === 'helper') {
-            ratings[ticketNumber].helperRating = rate === 0 ? null : rate;
-            const tickets = loadTickets();
-            const ticket = tickets[ticketNumber];
-            if (ticket && ticket.topicId) {
-                await bot.sendMessage(supportChat, `Оператор оценил пользователя на ${rate} ★`, {
+            try {
+                const topicName = `Тикет #${ticketNumber}: ${ticket.topic.substring(0, 30)}`;
+                const topic = await bot.createForumTopic(supportChat, topicName);
+                ticket.topicId = topic.message_thread_id;
+                
+                let content = `<b>Тема:</b> ${ticket.topic}\n<b>Описание:</b> ${ticket.description || '—'}\n<b>Срочность:</b> ${ticket.urgency}`;
+                if (ticket.media.length) {
+                    content += `\n<b>Вложения:</b> ${ticket.media.length} файлов`;
+                }
+                await bot.sendMessage(supportChat, content, {
+                    message_thread_id: ticket.topicId,
+                    parse_mode: 'HTML'
+                });
+                if (ticket.media.length > 0) {
+                    for (const m of ticket.media) {
+                        try {
+                            await bot.sendMessage(supportChat, '', {
+                                message_thread_id: ticket.topicId,
+                                [m.type]: m.file_id
+                            });
+                        } catch (err) {
+                            console.error('Ошибка отправки медиа в тикете:', err);
+                        }
+                    }
+                }
+                
+                const pinnedMsg = await bot.sendMessage(supportChat, 'Данный тикет открыт. Для помощи отвечайте в этой ветке.', {
                     message_thread_id: ticket.topicId
                 });
+                await bot.pinChatMessage(supportChat, pinnedMsg.message_id, { message_thread_id: ticket.topicId });
+
+                tickets[ticketNumber] = ticket;
+                saveTickets(tickets);
+
+                bot.answerCallbackQuery(query.id, { text: 'Тикет создан!' });
+            } catch (e) {
+                console.error('Ошибка создания темы:', e);
+                return bot.sendMessage(chatId, 'Я не смогла создать тему в группе поддержки. Я правда пыталась, но что-то пошло не так. Обратитесь в личные сообщения администратора @holy_inquizitor');
             }
-            await bot.sendMessage(chatId, 'Оценка сохранена.');
+            return;
         }
-        saveRatings(ratings);
 
+        if (data.startsWith('extra_')) {
+            const ticketNumber = parseInt(data.split('_')[1]);
+            const tickets = loadTickets();
+            const ticket = tickets[ticketNumber];
+            if (!ticket || ticket.status !== 'open') {
+                return bot.answerCallbackQuery(query.id, { text: 'Тикет не найден или закрыт.' });
+            }
+            
+            ticketCreationStates[userId] = { step: 'extra_message', ticketNumber };
+            bot.sendMessage(chatId, 'Отправьте дополнительное сообщение (до 800 символов) и до 5 медиафайлов. Фото обязательно отправлять как файл!!!');
+            bot.answerCallbackQuery(query.id);
+            return;
+        }
+
+        if (data.startsWith('close_')) {
+            const ticketNumber = parseInt(data.split('_')[1]);
+            const tickets = loadTickets();
+            const ticket = tickets[ticketNumber];
+            if (!ticket || ticket.status !== 'open') {
+                return bot.answerCallbackQuery(query.id, { text: 'Тикет не найден или закрыт.' });
+            }
+            
+            const code = Math.floor(1000 + Math.random() * 9000);
+            confirmCloseStates[userId] = { code, timer: null, ticketNumber };
+            const confirmMsg = await bot.sendMessage(chatId,
+                `Для подтверждения закрытия тикета #${ticketNumber} отправьте сообщение: ЗАКРЫТЬ ${code}. У вас 20 секунд.`
+            );
+            
+            const timer = setTimeout(() => {
+                delete confirmCloseStates[userId];
+                bot.editMessageText('Время вышло. Закрытие отменено.', {
+                    chat_id: chatId,
+                    message_id: confirmMsg.message_id
+                });
+            }, 20000);
+            confirmCloseStates[userId].timer = timer;
+            bot.answerCallbackQuery(query.id);
+            return;
+        }
+
+        if (data.startsWith('rate_')) {
+            const parts = data.split('_');
+            const rate = parseInt(parts[1]);
+            const ticketNumber = parseInt(parts[2]);
+            const who = parts[3];
+
+            const ratings = loadRatings();
+            if (!ratings[ticketNumber]) ratings[ticketNumber] = {};
+
+            if (who === 'user') {
+                ratings[ticketNumber].userRating = rate === 0 ? null : rate;
+                await bot.sendMessage(chatId, 'Спасибо за оценку!');
+            } else if (who === 'helper') {
+                ratings[ticketNumber].helperRating = rate === 0 ? null : rate;
+                const tickets = loadTickets();
+                const ticket = tickets[ticketNumber];
+                if (ticket && ticket.topicId) {
+                    await bot.sendMessage(supportChat, `Оператор оценил пользователя на ${rate} ★`, {
+                        message_thread_id: ticket.topicId
+                    });
+                }
+                await bot.sendMessage(chatId, 'Оценка сохранена.');
+            }
+            saveRatings(ratings);
+
+            try {
+                await bot.deleteMessage(chatId, query.message.message_id);
+            } catch (e) {
+                console.error('Не удалось удалить сообщение с оценкой:', e);
+            }
+
+            bot.answerCallbackQuery(query.id);
+            return;
+        }
+
+    } catch (e) {
+        console.error('Ticket callback error:', e);
         try {
-            await bot.deleteMessage(chatId, query.message.message_id);
-        } catch (e) {
-            console.error('Не удалось удалить сообщение с оценкой:', e);
-        }
-
-        bot.answerCallbackQuery(query.id);
-        return;
+            await bot.answerCallbackQuery(query.id, { text: 'Ошибка' });
+        } catch (err) {}
     }
 });
 
+bot.on('message', async (msg) => {
+    const chatId = msg.chat.id;
+    const userId = msg.from.id;
+
+    if (!settingsInputStates[chatId]?.awaitingInput) return;
+    if (settingsInputStates[chatId].awaitingInput.userId !== userId) return;
+
+    const state = settingsInputStates[chatId].awaitingInput;
+    const key = state.key;
+    const messageId = state.messageId;
+
+    try {
+        const admins = await bot.getChatAdministrators(chatId);
+        const isAdmin = admins.some(a => a.user.id === userId);
+        if (!isAdmin) {
+            delete settingsInputStates[chatId].awaitingInput;
+            return bot.sendMessage(chatId, 'Похоже вы не обладаете правами администратора в этой группе');
+        }
+    } catch {
+        delete settingsInputStates[chatId].awaitingInput;
+        return;
+    }
+
+    if (msg.text?.startsWith('/')) {
+        delete settingsInputStates[chatId].awaitingInput;
+        await showSettingsMenu(chatId, messageId);
+        return;
+    }
+
+    const settings = getChatSettings(chatId);
+    const currentValue = getNestedValue(settings, key);
+    const type = getSettingType(currentValue);
+    let newValue = msg.text?.trim() || '';
+
+    let parsedValue;
+    try {
+        if (newValue.toLowerCase() === 'null' || newValue === '') {
+            parsedValue = null;
+        } else if (type === 'number') {
+            parsedValue = parseFloat(newValue);
+            if (isNaN(parsedValue)) {
+                return bot.sendMessage(chatId, 'Пожалуйста, введите корректное число.');
+            }
+        } else {
+            parsedValue = newValue;
+        }
+    } catch (e) {
+        return bot.sendMessage(chatId, 'Неверный формат значения.');
+    }
+
+    updateChatSetting(chatId, key, parsedValue);
+    invalidateSettingsCache(chatId);
+
+    delete settingsInputStates[chatId].awaitingInput;
+
+    await showSettingEdit(chatId, messageId, key);
+    
+    bot.sendMessage(chatId, 'Я поменяла эту настройку!', {
+        reply_to_message_id: msg.message_id
+    });
+});
 async function closeTicket(ticketNumber, userId, closedBy) {
     const tickets = loadTickets();
     const ticket = tickets[ticketNumber];
