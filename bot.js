@@ -2235,37 +2235,6 @@ bot.on('message', async (msg) => {
         }
     }
 });
-/* bot.onText(/\/MCMode/, async (msg) => {
-    const chatId = msg.chat.id;
-    const userId = msg.from.id;
-    if(msg.chat.type === 'private' || msg.chat.type === 'channel') {
-        return bot.sendMessage(chatId, 'Я могу сделать это только в группе')
-    }
-    const admins = await bot.getChatAdministrators(chatId);
-    const isAdmin = admins.some(a => a.user.id === userId);   
-    
-    if(lastcommand >= commandCd || isAdmin) {
-        lastcommand = 0
-        if(!isAdmin) { return bot.sendMessage(chatId, 'Похоже вы не обладаете правами администратора в этой группе', { reply_to_message_id: msg.message_id })}
-        if(modChatMode == false) {
-            modChatMode = true
-            bot.sendMessage(chatId, 'В этом чате теперь включен режим чата модерации. Я больше не буду откликаться на команды в нём. Чтобы я отключила режим, используйте эту команду ещё раз', { reply_to_message_id: msg.message_id })
-            
-        }
-        if(modChatMode == true) {
-            modChatMode = false
-            bot.sendMessage(chatId, 'Я отключила в этом чате режим чата модерации. Теперь я снова буду откликаться на команды в нём. Чтобы вернуть режим, напишите эту команду ещё раз', { reply_to_message_id: msg.message_id })
-        }
-    }
-    
-}) 
-    
-//перед логикой, после проверки на приватность чата
-if(modChatMode) {
-        return bot,sendMessage(chatId, 'Этот чат настроен как чат модерации. Чтобы снять настройку напишите /MCMode')
-    }
-        
-*/
 
     
 
