@@ -1,0 +1,18 @@
+{
+  "modchatID": -1003903224584,
+  "commandCd": 15,
+  "warnExpireTime": "1M",
+  "warnPunishmentCount": 3,
+  "warnPunishment": {
+    "type": "mute",
+    "duration": null
+  },
+  "quickMuteDuration": "3h",
+  "autoComment": true,
+  "autoCommentTextDefault": "Приветка, Комментатор! \nУ нас в чатике есть правила, не нарушай их пожалуйста! \n\n Краткие правила чата - https://t.me/c/1855698987/31445 \n\n Полные правила чата - https://telegra.ph/PRAVILA-DIP-CHAT-OT-29-IYUNYA-2026-GODA-06-29",
+  "autoCommentText": "Приветка, Комментатор! \nУ нас в чатике есть правила, не нарушай их пожалуйста! \n\n Краткие правила чата - https://t.me/c/1855698987/31445 \n\n Полные правила чата - https://telegra.ph/PRAVILA-DIP-CHAT-OT-29-IYUNYA-2026-GODA-06-29",
+  "autoCommentTextEnd": "\n\nПриятного общения в чате, милаха!",
+  "allowKickme": true,
+  "mediaRestrictionEnabled": false,
+  "mediaRestrictionDuration": "2m"
+}

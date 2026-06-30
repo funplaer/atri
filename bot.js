@@ -4,7 +4,7 @@ const path = require('path');
 const { send } = require('process');
 
 
-const token = '8661483092:AAGamDTUFJlyOoDBgu8kj0RBm-BoAkO-Hr8'; 
+const token = '8661483092:AAErD2D2dh5UEES51wqFZE1JB7Cs7iJAKOA'; 
 const bot = new TelegramBot(token, { polling: true });
 
 
@@ -22,22 +22,104 @@ const RATINGS_FILE = path.join(SUPPORT_DATA_DIR, 'ratings.json');
 const temporaryRestrictions = {};
 const reportStates = {};
 //настройки
-const modchatID = '-1003903224584';
-const commandCd = 15;
-const warnExpireTime = '1M';
-const warnPunishmentCount = 3;
-const warnPunishment = {
-    type: 'mute', // mute или ban
-    duration: 'null' // null = навсегда
+
+
+const SETTINGS_DIR = path.join(__dirname, 'chat_settings');
+
+if (!fs.existsSync(SETTINGS_DIR)) fs.mkdirSync(SETTINGS_DIR);
+
+const defaultSettings = {
+    modchatID: null, // ID чата модерации
+    commandCd: 15, // КД команд в секундах
+    warnExpireTime: '1M', // Время снятия предупреждений
+    warnPunishmentCount: 3, // Количество варнов до наказания
+    warnPunishment: {
+        type: 'mute', // mute или ban
+        duration: null // null = навсегда
+    },
+    quickMuteDuration: '3h', // Длительность быстрого мута из репорта
+    autoComment: true, // Включить авто-комментарий
+    autoCommentText: 'Если вы видите этот текст, то вы не настроили текст авто-комментария в боте. Настройте его, используя /settings или выключите настройку autocomment', // Текст авто-комментария
+    autoCommentTextEnd: '\n\nПриятного вам использования бота', // Конец авто-комментария
+    allowKickme: false, // Разрешить /kickme
+    mediaRestrictionEnabled: false, // Включить ограничение медиа
+    mediaRestrictionDuration: '2m', // Длительность ограничения медиа   
 };
-const quickMuteDuration = '3h';
-const autoComment = true; 
-const autoCommentTextDefault = 'Приветка, Комментатор! \nУ нас в чатике есть правила, не нарушай их пожалуйста! \n\n Краткие правила чата - https://t.me/c/1855698987/31445 \n\n Полные правила чата - https://telegra.ph/PRAVILA-DIP-CHAT-OT-29-IYUNYA-2026-GODA-06-29';
-let autoCommentText = 'Приветка, Комментатор! \nУ нас в чатике есть правила, не нарушай их пожалуйста! \n\n Краткие правила чата - https://t.me/c/1855698987/31445 \n\n Полные правила чата - https://telegra.ph/PRAVILA-DIP-CHAT-OT-29-IYUNYA-2026-GODA-06-29';
-const autoCommentTextEnd = '\n\nПриятного общения в чате, милаха!'
-const allowKickme = true;
-const mediaRestrictionEnabled = false;
-const mediaRestrictionDuration = "2m";
+
+function getSettingsFile(chatId) {
+    return path.join(SETTINGS_DIR, `${chatId}_settings.json`);
+}
+
+function loadChatSettings(chatId) {
+    const file = getSettingsFile(chatId);
+    
+    if (!fs.existsSync(file)) {
+        const settings = JSON.parse(JSON.stringify(defaultSettings));
+        saveChatSettings(chatId, settings);
+        return settings;
+    }
+    
+    try {
+        const raw = fs.readFileSync(file, 'utf8');
+        const settings = JSON.parse(raw);
+        
+        const merged = { ...defaultSettings, ...settings };
+        
+        if (!merged.warnPunishment) {
+            merged.warnPunishment = { ...defaultSettings.warnPunishment };
+        } else {
+            merged.warnPunishment = { ...defaultSettings.warnPunishment, ...merged.warnPunishment };
+        }
+        
+        return merged;
+    } catch (e) {
+        console.error(`Ошибка загрузки настроек для чата ${chatId}:`, e);
+        return JSON.parse(JSON.stringify(defaultSettings));
+    }
+}
+
+function saveChatSettings(chatId, settings) {
+    const file = getSettingsFile(chatId);
+    const tmp = file + '.tmp';
+    
+    fs.writeFileSync(tmp, JSON.stringify(settings, null, 2));
+    fs.renameSync(tmp, file);
+}
+
+function updateChatSetting(chatId, key, value) {
+    const settings = loadChatSettings(chatId);
+    
+    if (key.includes('.')) {
+        const parts = key.split('.');
+        let current = settings;
+        for (let i = 0; i < parts.length - 1; i++) {
+            if (!current[parts[i]]) {
+                current[parts[i]] = {};
+            }
+            current = current[parts[i]];
+        }
+        current[parts[parts.length - 1]] = value;
+    } else {
+        settings[key] = value;
+    }
+    
+    saveChatSettings(chatId, settings);
+    return settings;
+}
+
+const settingsCache = new Map();
+
+function getChatSettings(chatId) {
+    if (!settingsCache.has(chatId)) {
+        settingsCache.set(chatId, loadChatSettings(chatId));
+    }
+    return settingsCache.get(chatId);
+}
+
+function invalidateSettingsCache(chatId) {
+    settingsCache.delete(chatId);
+}
+
 
 
 
@@ -300,6 +382,7 @@ async function executeQuickAction(query, action, chatId, messageId, report) {
     const adminId = query.from.id;
     const offenderId = report.offenderId;
     let punishmentText = '';
+    const settings = getChatSettings(chatId);
 
     try {
         if (action === 'report_warn') {
@@ -328,7 +411,7 @@ async function executeQuickAction(query, action, chatId, messageId, report) {
             await checkWarnPunishment(chatId, offenderId);
             punishmentText = 'предупреждение';
         } else if (action === 'report_mute') {
-            const duration = ParseDuration(quickMuteDuration);
+            const duration = ParseDuration(settings.quickMuteDuration);
             if (!duration) throw new Error('Неверная длительность мута');
             const untilDate = Math.floor(Date.now() / 1000) + duration;
             await bot.restrictChatMember(chatId, offenderId, {
@@ -362,7 +445,7 @@ async function executeQuickAction(query, action, chatId, messageId, report) {
             u.totalPunishments++;
             u.mutes.push({ ...muteEntry, chatId: chatId });
             saveUserLogs(offenderId, ulogs);
-            punishmentText = `мут на ${quickMuteDuration}`;
+            punishmentText = `мут на ${settings.quickMuteDuration}`;
         } else if (action === 'report_ban') {
             await bot.banChatMember(chatId, offenderId);
             const banEntry = {
@@ -501,8 +584,8 @@ async function disableRaidMode(chatId) {
 //команды
 bot.onText(/^\/start/, (msg) => {
     const chatId = msg.chat.id;
-    
-    if(lastcommand >= commandCd) {
+    const settings = getChatSettings(chatId);
+    if(lastcommand >= settings.commandCd) {
         bot.sendMessage(chatId, 'Привет! Я Атри — лучший бот для модерации чата, ведь я — ПРОДВИНУТАЯ!', { reply_to_message_id: msg.message_id});
         bot.sendSticker(chatId, 'CAACAgIAAxkBAAEW3Kpp2m3oeRAT7kSYyQYn50unC_LUcAACQk0AAgIrIUnHg1eVssvSCzsE', { reply_to_message_id: msg.message_id});
         lastcommand = 0;
@@ -511,13 +594,14 @@ bot.onText(/^\/start/, (msg) => {
 });
 bot.onText(/^\/commands/, async (msg) => {
     const chatId = msg.chat.id;
+    const settings = getChatSettings(chatId);
     if(msg.chat.type === 'private') {
         return bot.sendMessage(chatId, 'Вот, что я умею: \n <b>/help</b> — создать запрос в службу поддержки бота \n\nДля того, чтобы узнать больше о моих возможностях, используйте эту команду в чате, и в чате, в котором у вас есть права администратора, либо загляните на сайт atribot.ru (Сайт в процессе разработки) (!!ПОСЛЕ ОТКРЫТИЯ САЙТА ТЕКСТ В СКОБКАХ УДАЛИТЬ!!)', {parse_mode: 'HTML'})
     }
     const userId = msg.from.id;
     const admins = await bot.getChatAdministrators(chatId);
     const isAdmin = admins.some(admin => admin.user.id === userId);
-    if(lastcommand >= commandCd || isAdmin) {
+    if(lastcommand >= settings.commandCd || isAdmin) {
                 lastcommand = 0;
         
 
@@ -544,10 +628,10 @@ bot.onText(/\/mute(?:\s+(.+))?/, async (msg,match) => {
     if(msg.chat.type === 'private' || msg.chat.type === 'channel') {
         return bot.sendMessage(chatId, 'Я могу сделать это только в группе')
     }
-    
+    const settings = getChatSettings(chatId);
     const admins = await bot.getChatAdministrators(chatId);
     const isAdmin = admins.some(admin => admin.user.id === userId);
-    if(lastcommand >= commandCd || isAdmin) {
+    if(lastcommand >= settings.commandCd || isAdmin) {
         try {
             
             if(msg.chat.type === 'private') {
@@ -708,9 +792,10 @@ bot.onText(/\/unmute(?:\s+(.+))?/, async (msg, match) => {
     if(msg.chat.type === 'private' || msg.chat.type === 'channel') {
         return bot.sendMessage(chatId, 'Я могу сделать это только в группе')
     }
+    const settings = getChatSettings(chatId);
     const admins = await bot.getChatAdministrators(chatId);
     const isAdmin = admins.some(admin => admin.user.id === userId);
-    if(lastcommand >= commandCd || isAdmin) {
+    if(lastcommand >= settings.commandCd || isAdmin) {
         if(msg.chat.type === 'private') {
             return bot.sendMessage(chatId, 'Я могу сделать это только в группе', { reply_to_message_id: msg.message_id})
         } else {
@@ -797,10 +882,11 @@ bot.onText(/\/unmute(?:\s+(.+))?/, async (msg, match) => {
 });
 bot.onText(/^\/kickme/, async (msg) => {
     const chatId = msg.chat.id;
+    const settings = getChatSettings(chatId);
     if(msg.chat.type === 'private' || msg.chat.type === 'channel') {
         return bot.sendMessage(chatId, 'Я могу сделать это только в группе')
     }
-    if(!allowKickme) return bot.sendMessage(chatId, 'Мне запретили выгонять людей из этого чата по их желанию. Давайте попробуем решить всё мирно? Если совсем никак, то выйдите из чата сами((')
+    if(!settings.allowKickme) return bot.sendMessage(chatId, 'Мне запретили выгонять людей из этого чата по их желанию. Давайте попробуем решить всё мирно? Если совсем никак, то выйдите из чата сами((', { reply_to_message_id: msg.message_id})
     const admins = await bot.getChatAdministrators(chatId);
     const userId = msg.from.id;
     const isAdmin = admins.some(admin => admin.user.id === userId);    
@@ -828,7 +914,8 @@ bot.onText(/\/ban(?:\s+(.+))?/, async (msg, match) => {
     }
     const admins = await bot.getChatAdministrators(chatId);
     const isAdmin = admins.some(a => a.user.id === adminId);
-    if(lastcommand >= commandCd || isAdmin) {        
+    const settings = getChatSettings(chatId);
+    if(lastcommand >= settings.commandCd || isAdmin) {        
         lastcommand = 0
             try {
                 
@@ -984,7 +1071,8 @@ bot.onText(/\/unban(?:\s+(.+))?/, async (msg, match) => {
     }
     const admins = await bot.getChatAdministrators(chatId);
     const isAdmin = admins.some(a => a.user.id === adminId);
-    if(lastcommand >= commandCd || isAdmin) {
+    const settings = getChatSettings(chatId);
+    if(lastcommand >= settings.commandCd || isAdmin) {
         try {        
             if (!isAdmin) {
                 return bot.sendMessage(chatId, 'Похоже вы не обладаете правами администратора в этой группе', {
@@ -1086,7 +1174,8 @@ bot.onText(/\/note(?:\s+(.+))?/, async (msg, match) => {
     }
     const admins = await bot.getChatAdministrators(chatId);
     const isAdmin = admins.some(a => a.user.id === adminId);
-    if(lastcommand >= commandCd || isAdmin) {        
+    const settings = getChatSettings(chatId);
+    if(lastcommand >= settings.commandCd || isAdmin) {        
         try {            
             if (!isAdmin) {
                 return bot.sendMessage(chatId, 'Похоже вы не обадаете правми администратора в этой группе', { reply_to_message_id: msg.message_id});
@@ -1169,7 +1258,8 @@ bot.onText(/\/unnote (\d+)(?:\s+(.+))?/, async (msg, match) => {
     }
     const admins = await bot.getChatAdministrators(chatId);
     const isAdmin = admins.some(a => a.user.id === adminId);
-    if(lastcommand >= commandCd || isAdmin) {
+    const settings = getChatSettings(chatId);
+    if(lastcommand >= settings.commandCd || isAdmin) {
         try {
             if(!isAdmin) {
                 return bot.sendMessage(chatId, 'Похоже вы не обладаете правами администратора в этой группе', {reply_to_message_id: msg.message_id})
@@ -1256,7 +1346,8 @@ bot.onText(/\/user(?:\s+(.+))?/, async (msg, match) => {
     }
     const admins = await bot.getChatAdministrators(chatId);
     const isAdmin = admins.some(a => a.user.id === requesterId);
-    if(lastcommand >= commandCd || isAdmin) {
+    const settings = getChatSettings(chatId);
+    if(lastcommand >= settings.commandCd || isAdmin) {
         lastcommand = 0
         try {            
             let args = (match[1] || '').trim().split(/\s+/).filter(Boolean);
@@ -1479,12 +1570,13 @@ bot.onText(/\/user(?:\s+(.+))?/, async (msg, match) => {
                 text += `нет данных\n`;
             }
             if (sendToModChat) {
-                if (!modchatID) {
+                const settings = getChatSettings(chatId);
+                if (!settings.modchatID) {
                     return bot.sendMessage(chatId, 'Чат модерации не настроен', { reply_to_message_id: msg.message_id });
                 }
                 
                 try {
-                    await bot.sendMessage(modchatID, text, {
+                    await bot.sendMessage(settings.modchatID, text, {
                         parse_mode: 'HTML',
                         disable_web_page_preview: true
                     });
@@ -1521,7 +1613,8 @@ bot.onText(/^\/RaidMode/i, async (msg) => {
     }
     const admins = await bot.getChatAdministrators(chatId);
     const isAdmin = admins.some(a => a.user.id === userId);
-    if(lastcommand >= commandCd || isAdmin) {
+    const settings = getChatSettings(chatId);
+    if(lastcommand >= settings.commandCd || isAdmin) {
         lastcommand = 0
         if (!isAdmin) {
             return bot.sendMessage(chatId,
@@ -1542,7 +1635,8 @@ bot.onText(/^\/unRaidMode/i, async (msg) => {
     }
     const admins = await bot.getChatAdministrators(chatId);
     const isAdmin = admins.some(a => a.user.id === userId);    
-    if(lastcommand >= commandCd || isAdmin) {
+    const settings = getChatSettings(chatId);
+    if(lastcommand >= settings.commandCd || isAdmin) {
         lastcommand = 0
         if (!isAdmin) {
         return bot.sendMessage(chatId,
@@ -1565,8 +1659,8 @@ bot.onText(/\/warn(?:\s+(.+))?/, async (msg, match) => {
 
     const admins = await bot.getChatAdministrators(chatId);
     const isAdmin = admins.some(a => a.user.id === adminId);
-
-    if (!(lastcommand >= commandCd || isAdmin)) return;
+    const settings = getChatSettings(chatId);
+    if (!(lastcommand >= settings.commandCd || isAdmin)) return;
 
     lastcommand = 0;
 
@@ -1719,8 +1813,8 @@ bot.onText(/\/unwarn\s+(\d+)(?:\s+(.+))?/, async (msg, match) => {
 
     const admins = await bot.getChatAdministrators(chatId);
     const isAdmin = admins.some(a => a.user.id === adminId);
-
-    if (!(lastcommand >= commandCd || isAdmin)) return;
+    const settings = getChatSettings(chatId);
+    if (!(lastcommand >= settings.commandCd || isAdmin)) return;
 
     lastcommand = 0;
 
@@ -1821,10 +1915,10 @@ bot.onText(/\/unwarn\s+(\d+)(?:\s+(.+))?/, async (msg, match) => {
 
 bot.onText(/^\/report(?:\s+(.+))?/i, async (msg, match) => {
     const chatId = msg.chat.id;
-
+    const settings = getChatSettings(chatId);
     try {
-
-        if (!modchatID) {
+        
+        if (!settings.modchatID) {
             return bot.sendMessage(
                 chatId,
                 'Чат модерации не настроен, либо вы меня в него не позвали',
@@ -1913,7 +2007,7 @@ bot.onText(/^\/report(?:\s+(.+))?/i, async (msg, match) => {
         inline_keyboard: [
             [
                 { text: 'Предупреждение', callback_data: 'report_warn' },
-                { text: `Мут ${quickMuteDuration}`, callback_data: 'report_mute' },
+                { text: `Мут ${settings.quickMuteDuration}`, callback_data: 'report_mute' },
                 { text: 'Бан', callback_data: 'report_ban' }
             ],
             [
@@ -1924,7 +2018,8 @@ bot.onText(/^\/report(?:\s+(.+))?/i, async (msg, match) => {
     };
 
     const sent = await bot.sendMessage(
-        modchatID,
+        
+        settings.modchatID,
         reportText,
         {
             parse_mode: 'HTML',
@@ -2342,22 +2437,22 @@ bot.on('message', async (msg) => {
     
     const chatId = msg.chat.id;
     const messageId = msg.message_id;
-
-    if (autoComment && autoCommentText) {
+    const settings = getChatSettings(chatId);
+    if (settings.autoComment && settings.autoCommentText) {
         bot.getChat(chatId)
             .then(async(chat) => {
                 if (chat.linked_chat_id) {
                     if(msg.forward_from_chat.id == chat.linked_chat_id) {
                         try {
                             
-                            const Dur = ParseDuration(mediaRestrictionDuration)
-                            if(mediaRestrictionEnabled) {autoCommentText += `\n\nЯ запретила отправлть медиа-сообщения и ставить реакции на ${formatDuration(Dur)} ${autoCommentTextEnd}`}
-                            else {autoCommentText += autoCommentTextEnd}
-                            await bot.sendMessage(chatId, autoCommentText, {
+                            const Dur = ParseDuration(settings.mediaRestrictionDuration)
+                            if(settings.mediaRestrictionEnabled) {settings.autoCommentText += `\n\nЯ запретила отправлть медиа-сообщения и ставить реакции на ${formatDuration(Dur)} ${settings.autoCommentTextEnd}`}
+                            else {settings.autoCommentText += settings.autoCommentTextEnd}
+                            await bot.sendMessage(chatId, settings.autoCommentText, {
                                 reply_to_message_id: messageId
                             });
-                            autoCommentText = autoCommentTextDefault;
-                            if (mediaRestrictionEnabled) {
+                            settings.autoCommentText = settings.autoCommentTextDefault;
+                            if (settings.mediaRestrictionEnabled) {
                                 try {
                                     const current = await bot.getChat(chatId);
                                     const tempMediaRestPrem = {                                        
@@ -2380,7 +2475,7 @@ bot.on('message', async (msg) => {
                                     }
 
                                     temporaryRestrictions[chatId].mediaUntil =
-                                        Date.now() + ParseDuration(mediaRestrictionDuration) * 1000;        
+                                        Date.now() + ParseDuration(settings.mediaRestrictionDuration) * 1000;        
                                 } catch (e) {
                                     console.error("Media restriction enable error:", e);
                                 }
@@ -2523,9 +2618,9 @@ setInterval(async () => {
                     }
                 }
                 if (user.warns) {
-
+                    const settings = getChatSettings(chatId);
                 const warnExpireSeconds =
-                    ParseDuration(warnExpireTime);
+                    ParseDuration(settings.warnExpireTime);
 
                 if (warnExpireSeconds > 0) {
 
@@ -2594,22 +2689,22 @@ async function checkWarnPunishment(chatId, targetId) {
 
         const logs = loadLogs(chatId);
         const user = getUser(logs, targetId);
-
+        const settings = getChatSettings(chatId);
         const activeWarns =
             (user.warns || []).filter(w => w.active).length;
 
-        if (activeWarns < warnPunishmentCount) {
+        if (activeWarns < settings.warnPunishmentCount) {
             return;
         }
 
         const now = new Date().toISOString();
 
         const punishmentDuration =
-            warnPunishment.duration
-                ? ParseDuration(warnPunishment.duration)
+            settings.warnPunishment.duration
+                ? ParseDuration(settings.warnPunishment.duration)
                 : null;
 
-        if (warnPunishment.type === 'mute') {
+        if (settings.warnPunishment.type === 'mute') {
 
             let untilDate = 0;
 
@@ -2674,7 +2769,7 @@ async function checkWarnPunishment(chatId, targetId) {
 
             await bot.sendMessage(
                 chatId,
-                `Я автоматически запретила пользователю ${mention} писать в чат за достижение лимита предупреждений (${activeWarns}/${warnPunishmentCount})` +
+                `Я автоматически запретила пользователю ${mention} писать в чат за достижение лимита предупреждений (${activeWarns}/${settings.warnPunishmentCount})` +
                 (punishmentDuration
                     ? `\nСрок: ${formatDuration(punishmentDuration)}`
                     : ' навсегда'),
@@ -2683,7 +2778,7 @@ async function checkWarnPunishment(chatId, targetId) {
                 }
             );
 
-        } else if (warnPunishment.type === 'ban') {
+        } else if (settings.warnPunishment.type === 'ban') {
 
             let untilDate = 0;
 
@@ -2741,7 +2836,7 @@ async function checkWarnPunishment(chatId, targetId) {
 
             await bot.sendMessage(
                 chatId,
-                `Я заблокировала в чате пользователя ${mention} за достижение лимита предупреждений (${activeWarns}/${warnPunishmentCount})` +
+                `Я заблокировала в чате пользователя ${mention} за достижение лимита предупреждений (${activeWarns}/${settings.warnPunishmentCount})` +
                 (punishmentDuration
                     ? `\nСрок: ${formatDuration(punishmentDuration)}`
                     : ' навсегда'),
@@ -3156,5 +3251,15 @@ bot.on('message', async (msg) => {
     }
     return;
 });
+
+
+
+
+
+
+
+
+
+
 
 
