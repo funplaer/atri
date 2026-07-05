@@ -4,7 +4,7 @@ const path = require('path');
 const { send } = require('process');
 
 
-const token = '8661483092:AAFJzeZamaYRyoKSJpmSaxtsvKLqQpupETs'; 
+const token = '8661483092:AAFuERxDKgIHgC3jI4rdd89fsfrn9uW0sRM'; 
 const bot = new TelegramBot(token, { polling: true });
 
 
@@ -76,6 +76,14 @@ const SETTINGS_NAMES = {
     mediaRestrictionDuration: {
         name: 'Длительность ограничения медиа',
         description: 'На сколько запрещать отправку медиа-файлов после авто-комментария (m - минуты, h - часы, d - дни, M - месяцы)'
+    },
+    autoRaidMode: {
+        name: 'Автоматический антирейд',
+        description: 'Включить автоматическое обнаружение рейдов при массовых вступлениях.\n\n Режим рейда - это мой защитный механизм, который активируется при обнаружении массового вступления людей в чат.\n\n При включённой защите, я буду автоматически выгонять из группы всех вступивших в неё людей и запрещу простым пользователям писать в чат. Важно отметить, что я не блокирую администраторов, и не удаляю участников навсегда — я баню их и сразу разбаниваю обратно, для избежния случайного бана невиновных, и они спокойно смогли вернуться позже.\n\nПри выключенной настройке autoRaidMode автоматическое обнаружение не работает, но команды /RaidMode и /unRaidMode остаются доступны для ручного управления. Рекомендуется держать автоматический режим включённым для постоянной защиты, а уровень чувствительности выбирать в зависимости от активности вашего чата: чем активнее чат, тем выше должен быть уровень, чтобы избежать ложных срабатываний.'
+    },
+    raidSensitivity: {
+        name: 'Чувствительность антирейда',
+        description: 'Уровень активности чата (1-5). Определяет количество вступлений для активации рейда.\n\n Уровень 1 — минимальный, активирует защиту при 5 вступлениях за 15 секунд, подходит для очень тихих и малоактивных чатов, где даже небольшое количество новых людей за короткое время является аномалией.\n Уровень 2 — низкий, срабатывает при 7 вступлениях, для спокойных чатов с невысокой активностью.\n Уровень 3 — средний, 10 вступлений, значение по умолчанию, подходит для чатов со средней посещаемостью.\n Уровень 4 — высокий, 15 вступлений, для активных чатов, куда регулярно заходят новые участники.\n Уровень 5 — максимальный, 25 вступлений, для очень активных чатов с большим потоком новых пользователей, где только массовое нашествие из 25 человек за 15 секунд может считаться рейдом.'
     }
 };
 
@@ -100,6 +108,8 @@ const defaultSettings = {
     allowKickme: false,
     mediaRestrictionEnabled: false,
     mediaRestrictionDuration: '2m', 
+    autoRaidMode: false,
+    raidSensitivity: 3
 };
 
 function getSettingsFile(chatId) {
@@ -222,11 +232,9 @@ async function showSettingsMenu(chatId, messageId = null) {
     const sortedKeys = keys.sort();
     
     for (const key of sortedKeys) {
-        const value = getNestedValue(settings, key);
         const displayName = getSettingDisplayName(key);
-        const displayValue = formatSettingValue(value);
         buttons.push([{ 
-            text: `${displayName}: ${displayValue}`, 
+            text: displayName, 
             callback_data: `settings_edit_${key}` 
         }]);
     }
@@ -811,7 +819,7 @@ bot.onText(/^\/commands/, async (msg) => {
         
 
         try {            
-            const text = 'Вот, что я умею: \n   <b>/settings</b> — открыть настройки чата\n   <b>/user</b> — узнать информацию о пользователе (ответом на его сообщение или вписав его Id после команды), флаг -f — узнать полную информацию о пользователе, флаг -mc — отправить ответ в чат модерации (если настроен) пример использования команды: /user 12345678910 -f -mc \n   <b>/note</b> — создать заметку о пользователе (ответом на сообщение или указав Id), пример использования команды: \note 12345678910 спамер, команда /unnote НОМЕР_ЗАМЕТКИ — удалить конкретную заметку о пользователе (ответом на сообщение или указав Id), номер заметки можно узнать в информации о пользователе \n   <b>/warn</b> — выдать пользователю предупреждение (ответом на его сообщение или указав его Id), можно указать причину предупреждения, флаг -d — бот удалит сообщение нарушителя (если команда написана ответом на него), флаг -i — предупреждение не исчезает со временем (если настроено время автоматического снятия предупреждений) пример использования команды: /warn 12345678910 Спам -d -i, команда /unwarn НОМЕР_ВАРНА (ответом на сообщение или указав Id) — снять конкретное предупреждение у пользователя, номер предупреждение можно посмотреть в полной информации о пользователе \n   <b>/mute</b> — запретить пользователю писать в чат (ответом на его сообщение или указав его Id), можно указать срок мута в минутах, часах, днях, месяцах буквами m,h,d,M соответственно (если время не указанно, то мут вечный), можно указать причину, флаг -d — бот удалит сообщение нарушителя (если команда написана ответом на него), пример использования команды: /mute 12345678910 5h Спам -d, команда /unwarn (ответом на сообщение или указав Id) — досрочно снять ограничения с пользователя \n   <b>/ban</b> — заблокировать пользователя в чате (ответом на его сообщение или указав его Id), можно указать срок бана в минутах, часах, днях, месяцах буквами m,h,d,M соответственно (если время не указанно, то бан вечный), можно указать причину, флаг -d — бот удалит сообщение нарушителя (если команда написана ответом на него), пример использования команды: /ban 12345678910 5h Спам -d, команда /unban (ответом на сообщение или указав Id) — досрочно разблокировать пользователя \n <b>/raidMode</b> —   включить режим активного антиспама и антирейда, подробнее можно узнать в настройках, команда /unRaidMode — отключить режим агрессивного антиспама и антирейда'
+            const text = 'Вот, что я умею: \n   <b>/settings</b> — открыть настройки чата\n   <b>/user</b> — узнать информацию о пользователе (ответом на его сообщение или вписав его Id после команды), флаг -f — узнать полную информацию о пользователе, флаг -mc — отправить ответ в чат модерации (если настроен) пример использования команды: /user 12345678910 -f -mc \n   <b>/note</b> — создать заметку о пользователе (ответом на сообщение или указав Id), пример использования команды: \note 12345678910 спамер, команда /unnote НОМЕР_ЗАМЕТКИ — удалить конкретную заметку о пользователе (ответом на сообщение или указав Id), номер заметки можно узнать в информации о пользователе \n   <b>/warn</b> — выдать пользователю предупреждение (ответом на его сообщение или указав его Id), можно указать причину предупреждения, флаг -d — бот удалит сообщение нарушителя (если команда написана ответом на него), флаг -i — предупреждение не исчезает со временем (если настроено время автоматического снятия предупреждений) пример использования команды: /warn 12345678910 Спам -d -i, команда /unwarn НОМЕР_ВАРНА (ответом на сообщение или указав Id) — снять конкретное предупреждение у пользователя, номер предупреждение можно посмотреть в полной информации о пользователе \n   <b>/mute</b> — запретить пользователю писать в чат (ответом на его сообщение или указав его Id), можно указать срок мута в минутах, часах, днях, месяцах буквами m,h,d,M соответственно (если время не указанно, то мут вечный), можно указать причину, флаг -d — бот удалит сообщение нарушителя (если команда написана ответом на него), пример использования команды: /mute 12345678910 5h Спам -d, команда /unmute (ответом на сообщение или указав Id) — досрочно снять ограничения с пользователя \n   <b>/ban</b> — заблокировать пользователя в чате (ответом на его сообщение или указав его Id), можно указать срок бана в минутах, часах, днях, месяцах буквами m,h,d,M соответственно (если время не указанно, то бан вечный), можно указать причину, флаг -d — бот удалит сообщение нарушителя (если команда написана ответом на него), пример использования команды: /ban 12345678910 5h Спам -d, команда /unban (ответом на сообщение или указав Id) — досрочно разблокировать пользователя \n <b>/raidMode</b> —   включить режим активного антиспама и антирейда, команда /unRaidMode — отключить режим агрессивного антиспама и антирейда'
             if(!isAdmin) {
                 return bot.sendMessage(chatId, 'Вот, что я умею: \n   <b>/user</b> — узнать информацию о себе \n   <b>/report</b> — сообщить о нарушителе в чате (ответом на его сообщение) \n   <b>/help</b> — создать запрос в службу поддержки бота', {parse_mode: 'HTML', reply_to_message_id: msg.message_id})
                 
@@ -1601,7 +1609,7 @@ bot.onText(/\/user(?:\s+(.+))?/, async (msg, match) => {
             const name = member?.user?.first_name || 'Unknown';
             const mention = `<a href="tg://user?id=${targetId}">${name}</a>`;
 
-            let text;
+            let text = '';
             if(sendToModChat){
                 text += `Информация отправлена в модераторский чат \n`
             }
@@ -2599,72 +2607,65 @@ bot.on('new_chat_members', async (msg) => {
     const chatId = msg.chat.id;
 
     try {
-
+        const settings = getChatSettings(chatId);
         
-        if (raidModeChats.has(chatId)) {
+        if (!settings.autoRaidMode) {
+            return;
+        }
+
+        const sensitivityMap = {
+            1: 5,   
+            2: 7,   
+            3: 10,  
+            4: 15,  
+            5: 25   
+        };
+        
+        const raidThreshold = sensitivityMap[settings.raidSensitivity] || 10;
+
+        if (!joinTracker[chatId]) {
+            joinTracker[chatId] = [];
+        }
+
+        const now = Date.now();
+
+        for (const user of msg.new_chat_members) {
+            joinTracker[chatId].push({
+                id: user.id,
+                time: now
+            });
+        }
+
+        joinTracker[chatId] = joinTracker[chatId].filter(
+            entry => now - entry.time <= 15000
+        );
+
+        if (joinTracker[chatId].length >= raidThreshold) {
+            const raidUsers = [...joinTracker[chatId]];
+
+            await enableRaidMode(chatId);
 
             const admins = await bot.getChatAdministrators(chatId);
 
-            for (const user of msg.new_chat_members) {
-
-                const isAdmin = admins.some(a => a.user.id === user.id);
-
+            for (const entry of raidUsers) {
+                const isAdmin = admins.some(a => a.user.id === entry.id);
                 if (!isAdmin) {
                     try {
-                        await bot.banChatMember(chatId, user.id);
-                        await bot.unbanChatMember(chatId, user.id);
+                        await bot.banChatMember(chatId, entry.id);
+                        await bot.unbanChatMember(chatId, entry.id);
                     } catch {}
                 }
             }
 
-            return;
+            joinTracker[chatId] = [];
         }
-
-        
-        if (!joinTracker[chatId]) {
-    joinTracker[chatId] = [];
-}
-
-const now = Date.now();
-
-for (const user of msg.new_chat_members) {
-    joinTracker[chatId].push({
-        id: user.id,
-        time: now
-    });
-}
-
-joinTracker[chatId] = joinTracker[chatId].filter(
-    entry => now - entry.time <= 15000
-);
-
-if (joinTracker[chatId].length >= 5) {
-
-    const raidUsers = [...joinTracker[chatId]];
-
-    await enableRaidMode(chatId);
-
-    const admins = await bot.getChatAdministrators(chatId);
-
-    for (const entry of raidUsers) {
-
-        const isAdmin = admins.some(a => a.user.id === entry.id);
-
-        if (!isAdmin) {
-            try {
-                await bot.banChatMember(chatId, entry.id);
-                await bot.unbanChatMember(chatId, entry.id);
-            } catch {}
-        }
-    }
-
-    joinTracker[chatId] = [];
-}
 
     } catch (e) {
         console.error('Raid detector error:', e);
     }
 });
+
+
  
 bot.on('message', async (msg) => {
     if (msg.chat.type !== 'supergroup' && msg.chat.type !== 'group') return;
@@ -3493,6 +3494,11 @@ bot.on('message', async (msg) => {
             parsedValue = parseFloat(newValue);
             if (isNaN(parsedValue)) {
                 return bot.sendMessage(chatId, 'Пожалуйста, введите корректное число.');
+            }
+            if (key === 'raidSensitivity') {
+                if (parsedValue < 1 || parsedValue > 5 || !Number.isInteger(parsedValue)) {
+                    return bot.sendMessage(chatId, 'Пожалуйста, введите целое число от 1 до 5.');
+                }
             }
         } else {
             parsedValue = newValue;
