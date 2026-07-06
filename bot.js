@@ -84,6 +84,14 @@ const SETTINGS_NAMES = {
     raidSensitivity: {
         name: 'Чувствительность антирейда',
         description: 'Уровень активности чата (1-5). Определяет количество вступлений для активации рейда.\n\n Уровень 1 — минимальный, активирует защиту при 5 вступлениях за 15 секунд, подходит для очень тихих и малоактивных чатов, где даже небольшое количество новых людей за короткое время является аномалией.\n Уровень 2 — низкий, срабатывает при 7 вступлениях, для спокойных чатов с невысокой активностью.\n Уровень 3 — средний, 10 вступлений, значение по умолчанию, подходит для чатов со средней посещаемостью.\n Уровень 4 — высокий, 15 вступлений, для активных чатов, куда регулярно заходят новые участники.\n Уровень 5 — максимальный, 25 вступлений, для очень активных чатов с большим потоком новых пользователей, где только массовое нашествие из 25 человек за 15 секунд может считаться рейдом.'
+    },
+    autoDeleteEnabled: {
+        name: 'Автоудаление сообщений бота',
+        description: 'Включить автоматическое удаление сообщений бота и команд через заданное время'
+    },
+    autoDeleteDuration: {
+        name: 'Время до автоудаления',
+        description: 'Через сколько удалять сообщения бота и команды (m - минуты, h - часы, d - дни, M - месяцы)'
     }
 };
 
@@ -109,13 +117,71 @@ const defaultSettings = {
     mediaRestrictionEnabled: false,
     mediaRestrictionDuration: '2m', 
     autoRaidMode: false,
-    raidSensitivity: 3
+    raidSensitivity: 3,
+    autoDeleteEnabled: false,
+    autoDeleteDuration: '3m'
 };
+const pendingDeletions = new Map(); 
 
+function scheduleDeletion(chatId, messageIds, duration) {
+    const key = `${chatId}_${Date.now()}_${Math.random()}`;
+    const timeout = setTimeout(async () => {
+        try {
+            for (const msgId of messageIds) {
+                try {
+                    await bot.deleteMessage(chatId, msgId);
+                } catch (e) {
+                }
+            }
+        } catch (e) {
+            console.error('Auto-delete error:', e);
+        }
+        for (const [k, v] of pendingDeletions) {
+            if (v === timeout) {
+                pendingDeletions.delete(k);
+                break;
+            }
+        }
+    }, duration * 1000);
+    
+    const key2 = `${chatId}_${messageIds.join('_')}`;
+    pendingDeletions.set(key2, timeout);
+    
+    return { key: key2, timeout };
+}
 function getSettingsFile(chatId) {
     return path.join(SETTINGS_DIR, `${chatId}_settings.json`);
 }
-
+async function sendMessageWithAutoDelete(chatId, text, options = {}, duration = null) {
+    const settings = getChatSettings(chatId);
+    
+    if (!settings.autoDeleteEnabled || chatId.toString().startsWith('-') === false) {
+        return bot.sendMessage(chatId, text, options);
+    }
+    
+    const deleteDuration = duration || ParseDuration(settings.autoDeleteDuration);
+    if (!deleteDuration || deleteDuration <= 0) {
+        return bot.sendMessage(chatId, text, options);
+    }
+    
+    const sent = await bot.sendMessage(chatId, text, options);
+    
+    scheduleDeletion(chatId, [sent.message_id], deleteDuration);
+    
+    return sent;
+}
+async function deleteCommandAndResponse(chatId, commandMsgId, botMsgId, duration) {
+    const settings = getChatSettings(chatId);
+    if (!settings.autoDeleteEnabled) return;
+    
+    const deleteDuration = duration || ParseDuration(settings.autoDeleteDuration);
+    if (!deleteDuration || deleteDuration <= 0) return;
+    
+    const messageIds = [commandMsgId];
+    if (botMsgId) messageIds.push(botMsgId);
+    
+    scheduleDeletion(chatId, messageIds, deleteDuration);
+}
 function loadChatSettings(chatId) {
     const file = getSettingsFile(chatId);
     
@@ -809,7 +875,8 @@ bot.onText(/^\/commands/, async (msg) => {
     const chatId = msg.chat.id;
     const settings = getChatSettings(chatId);
     if(msg.chat.type === 'private') {
-        return bot.sendMessage(chatId, 'Вот, что я умею: \n <b>/help</b> — создать запрос в службу поддержки бота \n\nДля того, чтобы узнать больше о моих возможностях, используйте эту команду в чате, и в чате, в котором у вас есть права администратора, либо загляните на сайт atribot.ru (Сайт в процессе разработки) (!!ПОСЛЕ ОТКРЫТИЯ САЙТА ТЕКСТ В СКОБКАХ УДАЛИТЬ!!)', {parse_mode: 'HTML'})
+        const sent = await bot.sendMessage(chatId, 'Вот, что я умею: \n <b>/help</b> — создать запрос в службу поддержки бота \n\nДля того, чтобы узнать больше о моих возможностях, используйте эту команду в чате, и в чате, в котором у вас есть права администратора, либо загляните на сайт atribot.ru (Сайт в процессе разработки) (!!ПОСЛЕ ОТКРЫТИЯ САЙТА ТЕКСТ В СКОБКАХ УДАЛИТЬ!!)', {parse_mode: 'HTML'})
+        return await deleteCommandAndResponse(chatId, msg.message_id, sent.message_id);
     }
     const userId = msg.from.id;
     const admins = await bot.getChatAdministrators(chatId);
@@ -821,11 +888,12 @@ bot.onText(/^\/commands/, async (msg) => {
         try {            
             const text = 'Вот, что я умею: \n   <b>/settings</b> — открыть настройки чата\n   <b>/user</b> — узнать информацию о пользователе (ответом на его сообщение или вписав его Id после команды), флаг -f — узнать полную информацию о пользователе, флаг -mc — отправить ответ в чат модерации (если настроен) пример использования команды: /user 12345678910 -f -mc \n   <b>/note</b> — создать заметку о пользователе (ответом на сообщение или указав Id), пример использования команды: \note 12345678910 спамер, команда /unnote НОМЕР_ЗАМЕТКИ — удалить конкретную заметку о пользователе (ответом на сообщение или указав Id), номер заметки можно узнать в информации о пользователе \n   <b>/warn</b> — выдать пользователю предупреждение (ответом на его сообщение или указав его Id), можно указать причину предупреждения, флаг -d — бот удалит сообщение нарушителя (если команда написана ответом на него), флаг -i — предупреждение не исчезает со временем (если настроено время автоматического снятия предупреждений) пример использования команды: /warn 12345678910 Спам -d -i, команда /unwarn НОМЕР_ВАРНА (ответом на сообщение или указав Id) — снять конкретное предупреждение у пользователя, номер предупреждение можно посмотреть в полной информации о пользователе \n   <b>/mute</b> — запретить пользователю писать в чат (ответом на его сообщение или указав его Id), можно указать срок мута в минутах, часах, днях, месяцах буквами m,h,d,M соответственно (если время не указанно, то мут вечный), можно указать причину, флаг -d — бот удалит сообщение нарушителя (если команда написана ответом на него), пример использования команды: /mute 12345678910 5h Спам -d, команда /unmute (ответом на сообщение или указав Id) — досрочно снять ограничения с пользователя \n   <b>/ban</b> — заблокировать пользователя в чате (ответом на его сообщение или указав его Id), можно указать срок бана в минутах, часах, днях, месяцах буквами m,h,d,M соответственно (если время не указанно, то бан вечный), можно указать причину, флаг -d — бот удалит сообщение нарушителя (если команда написана ответом на него), пример использования команды: /ban 12345678910 5h Спам -d, команда /unban (ответом на сообщение или указав Id) — досрочно разблокировать пользователя \n <b>/raidMode</b> —   включить режим активного антиспама и антирейда, команда /unRaidMode — отключить режим агрессивного антиспама и антирейда'
             if(!isAdmin) {
-                return bot.sendMessage(chatId, 'Вот, что я умею: \n   <b>/user</b> — узнать информацию о себе \n   <b>/report</b> — сообщить о нарушителе в чате (ответом на его сообщение) \n   <b>/help</b> — создать запрос в службу поддержки бота', {parse_mode: 'HTML', reply_to_message_id: msg.message_id})
-                
+                const sent = await bot.sendMessage(chatId, 'Вот, что я умею: \n   <b>/user</b> — узнать информацию о себе \n   <b>/report</b> — сообщить о нарушителе в чате (ответом на его сообщение) \n   <b>/help</b> — создать запрос в службу поддержки бота', {parse_mode: 'HTML', reply_to_message_id: msg.message_id})
+                return await deleteCommandAndResponse(chatId, msg.message_id, sent.message_id);
             }
             if(isAdmin) {
-                return bot.sendMessage(chatId, text, {parse_mode: 'HTML', reply_to_message_id: msg.message_id}) 
+                const sent = await bot.sendMessage(chatId, text, {parse_mode: 'HTML', reply_to_message_id: msg.message_id}) 
+                return await deleteCommandAndResponse(chatId, msg.message_id, sent.message_id);
                 
             }           
         } catch (error) {
@@ -873,9 +941,10 @@ bot.onText(/\/mute(?:\s+(.+))?/, async (msg,match) => {
                         const result = await ResolveUser(bot, chatId, userInput);
 
                         if (!result.ok) {
-                            return bot.sendMessage(chatId, 'Кажется я не знакома с этим пользователем', {
+                            const sent = await bot.sendMessage(chatId, 'Кажется я не знакома с этим пользователем', {
                                 reply_to_message_id: msg.message_id
                             });
+                            return await deleteCommandAndResponse(chatId, msg.message_id, sent.message_id);
                         }
 
                         targetId = result.id;
@@ -883,7 +952,8 @@ bot.onText(/\/mute(?:\s+(.+))?/, async (msg,match) => {
                     }
 
                     if(targetId === null) {
-                        return bot.sendMessage(chatId, 'Кажется я не знакома с этим пользователем', { reply_to_message_id: msg.message_id})
+                        const sent = await bot.sendMessage(chatId, 'Кажется я не знакома с этим пользователем', { reply_to_message_id: msg.message_id})
+                        return await deleteCommandAndResponse(chatId, msg.message_id, sent.message_id);
                     }
 
                     // флаги
@@ -943,10 +1013,11 @@ bot.onText(/\/mute(?:\s+(.+))?/, async (msg,match) => {
                                 text += ` по причине '${reason}'`;
                             }
 
-                            bot.sendMessage(chatId, text, {
+                            const sent = await bot.sendMessage(chatId, text, {
                                 parse_mode: 'HTML',
                                 reply_to_message_id: msg.message_id
                             });
+                            await deleteCommandAndResponse(chatId, msg.message_id, sent.message_id);
                             const logs = loadLogs(chatId);
                             const userLog = getUser(logs, targetId);
 
@@ -984,11 +1055,12 @@ bot.onText(/\/mute(?:\s+(.+))?/, async (msg,match) => {
                             return bot.sendSticker(chatId, 'CAACAgIAAxkBAAEW4xFp3TsFwtS0nT6OivaNRZQ8OmArcwACJVcAAtkTIUlsu94nV6R8wDsE', { reply_to_message_id: msg.message_id})
                         }
                     } else {
-                        return bot.sendMessage(chatId, 'Я не могу наказать другого администратора', { reply_to_message_id: msg.message_id})
+                        const sent = await bot.sendMessage(chatId, 'Я не могу наказать другого администратора', { reply_to_message_id: msg.message_id})
+                        return await deleteCommandAndResponse(chatId, msg.message_id, sent.message_id);
                     }
                 } else {
-                    return bot.sendMessage(chatId, 'Похоже вы не обадаете правми администратора в этой группе', { reply_to_message_id: msg.message_id});
-                    
+                    const sent = await bot.sendMessage(chatId, 'Похоже вы не обадаете правми администратора в этой группе', { reply_to_message_id: msg.message_id});
+                    return await deleteCommandAndResponse(chatId, msg.message_id, sent.message_id);
                 }
             }
             
@@ -1016,9 +1088,10 @@ bot.onText(/\/unmute(?:\s+(.+))?/, async (msg, match) => {
                 
                 let args = (match[1] || '').trim().split(/\s+/).filter(Boolean);
                 if (!isAdmin) {
-                    return bot.sendMessage(chatId, 'Похоже вы не обадаете правми администратора в этой группе', {
+                    const sent = await bot.sendMessage(chatId, 'Похоже вы не обадаете правми администратора в этой группе', {
                         reply_to_message_id: msg.message_id
                     });
+                    return await deleteCommandAndResponse(chatId, msg.message_id, sent.message_id);
                 }
 
                 let targetId = null;
@@ -1032,9 +1105,10 @@ bot.onText(/\/unmute(?:\s+(.+))?/, async (msg, match) => {
 
                     const res = await ResolveUser(bot, chatId, input);
                     if (!res.ok) {
-                        return bot.sendMessage(chatId, 'Кажется я не знакома с этим пользователем', {
+                        const sent = await bot.sendMessage(chatId, 'Кажется я не знакома с этим пользователем', {
                             reply_to_message_id: msg.message_id
                         });
+                        return await deleteCommandAndResponse(chatId, msg.message_id, sent.message_id);
                     }
 
                     targetId = res.id;
@@ -1053,10 +1127,11 @@ bot.onText(/\/unmute(?:\s+(.+))?/, async (msg, match) => {
                 const target = await bot.getChatMember(chatId, targetId);
                 const targetName = target.user.first_name;
                 const mention = `<a href="tg://user?id=${targetId}">${targetName}</a>`;
-                bot.sendMessage(chatId,
+                const sent = await bot.sendMessage(chatId,
                     `Пользователь ${mention} снова может писать! С возвращением!`,
                     { parse_mode: 'HTML', reply_to_message_id: msg.message_id }
                 );
+                await deleteCommandAndResponse(chatId, msg.message_id, sent.message_id);
                 const logs = loadLogs(chatId);
                 const userLog = getUser(logs, targetId);
 
@@ -1099,16 +1174,21 @@ bot.onText(/^\/kickme/, async (msg) => {
     if(msg.chat.type === 'private' || msg.chat.type === 'channel') {
         return bot.sendMessage(chatId, 'Я могу сделать это только в группе')
     }
-    if(!settings.allowKickme) return bot.sendMessage(chatId, 'Мне запретили выгонять людей из этого чата по их желанию. Давайте попробуем решить всё мирно? Если совсем никак, то выйдите из чата сами((', { reply_to_message_id: msg.message_id})
+    if(!settings.allowKickme) {
+        const sent = await bot.sendMessage(chatId, 'Мне запретили выгонять людей из этого чата по их желанию. Давайте попробуем решить всё мирно? Если совсем никак, то выйдите из чата сами((', { reply_to_message_id: msg.message_id})
+        return await deleteCommandAndResponse(chatId, msg.message_id, sent.message_id);
+    }
     const admins = await bot.getChatAdministrators(chatId);
     const userId = msg.from.id;
     const isAdmin = admins.some(admin => admin.user.id === userId);    
         if(isAdmin) {
-            return bot.sendMessage(chatId, 'От админства не так-то просто отделаться, страдай дальше))', { reply_to_message_id: msg.message_id})
+            const sent = await bot.sendMessage(chatId, 'От админства не так-то просто отделаться, страдай дальше))', { reply_to_message_id: msg.message_id})
+            return await deleteCommandAndResponse(chatId, msg.message_id, sent.message_id);
         } else {
             try {                 
                 bot.banChatMember(chatId, msg.from.id)
-                bot.sendMessage(chatId, 'Пока-пока((', { reply_to_message_id: msg.message_id})
+                const sent = await bot.sendMessage(chatId, 'Пока-пока((', { reply_to_message_id: msg.message_id})
+                await deleteCommandAndResponse(chatId, msg.message_id, sent.message_id);
                 bot.unbanChatMember(chatId, msg.from.id)            
             } catch(e) {
                 console.error(e)
@@ -1134,9 +1214,10 @@ bot.onText(/\/ban(?:\s+(.+))?/, async (msg, match) => {
                 
 
                 if (!isAdmin) {
-                    return bot.sendMessage(chatId, 'Похоже вы не обладаете правами администратора в этой группе', {
+                    const sent = await bot.sendMessage(chatId, 'Похоже вы не обладаете правами администратора в этой группе', {
                         reply_to_message_id: msg.message_id
                     });
+                    return await deleteCommandAndResponse(chatId, msg.message_id, sent.message_id);
                 }
 
                 let args = (match[1] || '').trim().split(/\s+/).filter(Boolean);
@@ -1157,9 +1238,10 @@ bot.onText(/\/ban(?:\s+(.+))?/, async (msg, match) => {
 
                     const res = await ResolveUser(bot, chatId, input);
                     if (!res.ok) {
-                        return bot.sendMessage(chatId, 'Кажется я не знакома с этим пользователем', {
+                        const sent = await bot.sendMessage(chatId, 'Кажется я не знакома с этим пользователем', {
                             reply_to_message_id: msg.message_id
                         });
+                        return await deleteCommandAndResponse(chatId, msg.message_id, sent.message_id);
                     }
 
                     targetId = res.id;
@@ -1167,9 +1249,10 @@ bot.onText(/\/ban(?:\s+(.+))?/, async (msg, match) => {
                 }
 
                 if (!targetId) {
-                    return bot.sendMessage(chatId, 'Кажется я не знакома с этим пользователем', {
+                    const sent = await bot.sendMessage(chatId, 'Кажется я не знакома с этим пользователем', {
                         reply_to_message_id: msg.message_id
                     });
+                    return await deleteCommandAndResponse(chatId, msg.message_id, sent.message_id);
                 }
 
                 
@@ -1189,9 +1272,10 @@ bot.onText(/\/ban(?:\s+(.+))?/, async (msg, match) => {
                 
                 const isTargetAdmin = admins.some(a => a.user.id === targetId);
                 if (isTargetAdmin) {
-                    return bot.sendMessage(chatId, 'Я не могу наказать другого администратора', {
+                    const sent = await bot.sendMessage(chatId, 'Я не могу наказать другого администратора', {
                         reply_to_message_id: msg.message_id
                     });
+                    return await deleteCommandAndResponse(chatId, msg.message_id, sent.message_id);
                 }
 
                 
@@ -1225,11 +1309,11 @@ bot.onText(/\/ban(?:\s+(.+))?/, async (msg, match) => {
 
                 if (reason) text += `\nПо причине: ${reason}`;
 
-                await bot.sendMessage(chatId, text, {
+                const sent = await bot.sendMessage(chatId, text, {
                     parse_mode: 'HTML',
                     reply_to_message_id: msg.message_id
                 });
-
+                await deleteCommandAndResponse(chatId, msg.message_id, sent.message_id);
                 
                 const logs = loadLogs(chatId);
                 const userLog = getUser(logs, targetId);
@@ -1288,9 +1372,10 @@ bot.onText(/\/unban(?:\s+(.+))?/, async (msg, match) => {
     if(lastcommand >= settings.commandCd || isAdmin) {
         try {        
             if (!isAdmin) {
-                return bot.sendMessage(chatId, 'Похоже вы не обладаете правами администратора в этой группе', {
+                const sent = await bot.sendMessage(chatId, 'Похоже вы не обладаете правами администратора в этой группе', {
                     reply_to_message_id: msg.message_id
                 });
+                return await deleteCommandAndResponse(chatId, msg.message_id, sent.message_id);
             }
 
             let targetId = null;
@@ -1301,9 +1386,10 @@ bot.onText(/\/unban(?:\s+(.+))?/, async (msg, match) => {
                 let args = (match[1] || '').trim().split(/\s+/).filter(Boolean);
 
                 if (!args.length) {
-                    return bot.sendMessage(chatId, 'Кажется я не знакома с этим пользователем', {
+                    const sent = await bot.sendMessage(chatId, 'Кажется я не знакома с этим пользователем', {
                         reply_to_message_id: msg.message_id
                     });
+                    return await deleteCommandAndResponse(chatId, msg.message_id, sent.message_id);
                 }
 
                 const entityMention = getUserFromEntities(msg);
@@ -1312,9 +1398,10 @@ bot.onText(/\/unban(?:\s+(.+))?/, async (msg, match) => {
                 const res = await ResolveUser(bot, chatId, input);
 
                 if (!res.ok) {
-                    return bot.sendMessage(chatId, 'Кажется я не знакома с этим пользователем', {
+                    const sent = await bot.sendMessage(chatId, 'Кажется я не знакома с этим пользователем', {
                         reply_to_message_id: msg.message_id
                     });
+                    return await deleteCommandAndResponse(chatId, msg.message_id, sent.message_id);
                 }
 
                 targetId = res.id;
@@ -1326,14 +1413,14 @@ bot.onText(/\/unban(?:\s+(.+))?/, async (msg, match) => {
             const name = member?.user?.first_name || 'User';
             const mention = `<a href="tg://user?id=${targetId}">${name}</a>`;
 
-            await bot.sendMessage(chatId,
+            const sent = await bot.sendMessage(chatId,
                 `Пользователь ${mention} разблокирован. С возвращением!`,
                 {
                     parse_mode: 'HTML',
                     reply_to_message_id: msg.message_id
                 }
             );
-
+            await deleteCommandAndResponse(chatId, msg.message_id, sent.message_id);
 
             const logs = loadLogs(chatId);
             const userLog = getUser(logs, targetId);
@@ -1391,7 +1478,8 @@ bot.onText(/\/note(?:\s+(.+))?/, async (msg, match) => {
     if(lastcommand >= settings.commandCd || isAdmin) {        
         try {            
             if (!isAdmin) {
-                return bot.sendMessage(chatId, 'Похоже вы не обадаете правми администратора в этой группе', { reply_to_message_id: msg.message_id});
+                const sent = await bot.sendMessage(chatId, 'Похоже вы не обадаете правми администратора в этой группе', { reply_to_message_id: msg.message_id});
+                return await deleteCommandAndResponse(chatId, msg.message_id, sent.message_id);
             }
 
             let args = (match[1] || '').trim().split(/\s+/);
@@ -1408,9 +1496,10 @@ bot.onText(/\/note(?:\s+(.+))?/, async (msg, match) => {
 
                     const res = await ResolveUser(bot, chatId, input);
                     if (!res.ok) {
-                        return bot.sendMessage(chatId, 'Кажется я не знакома с этим пользователем', {
+                        const sent = await bot.sendMessage(chatId, 'Кажется я не знакома с этим пользователем', {
                             reply_to_message_id: msg.message_id
                         });
+                        return await deleteCommandAndResponse(chatId, msg.message_id, sent.message_id);
                     }
 
                     targetId = res.id;
@@ -1418,7 +1507,8 @@ bot.onText(/\/note(?:\s+(.+))?/, async (msg, match) => {
                     text = args.join(' ');
                 }
             if (!text) {
-                return bot.sendMessage(chatId, 'Вы не сказали что мне следует записать о пользователе', { reply_to_message_id: msg.message_id});
+                const sent = await bot.sendMessage(chatId, 'Вы не сказали что мне следует записать о пользователе', { reply_to_message_id: msg.message_id});
+                return await deleteCommandAndResponse(chatId, msg.message_id, sent.message_id);
             }
 
             const logs = loadLogs(chatId);
@@ -1449,10 +1539,10 @@ bot.onText(/\/note(?:\s+(.+))?/, async (msg, match) => {
 
             saveUserLogs(targetId, ulogs);
 
-            return bot.sendMessage(chatId, 'Я всё записала!', {
+            const sent = await bot.sendMessage(chatId, 'Я всё записала!', {
                 reply_to_message_id: msg.message_id
             });
-
+            await deleteCommandAndResponse(chatId, msg.message_id, sent.message_id);
         } catch (e) {
             console.error(e, '4');
             bot.sendMessage(chatId, 'Простите, я не смогла записать информацию о пользователе. Я правда пыталась, но что-то пошло не так((', { reply_to_message_id: msg.message_id})
@@ -1475,7 +1565,8 @@ bot.onText(/\/unnote (\d+)(?:\s+(.+))?/, async (msg, match) => {
     if(lastcommand >= settings.commandCd || isAdmin) {
         try {
             if(!isAdmin) {
-                return bot.sendMessage(chatId, 'Похоже вы не обладаете правами администратора в этой группе', {reply_to_message_id: msg.message_id})
+                const sent = await bot.sendMessage(chatId, 'Похоже вы не обладаете правами администратора в этой группе', {reply_to_message_id: msg.message_id})
+                return await deleteCommandAndResponse(chatId, msg.message_id, sent.message_id);
             }
             
             let targetId = null;
@@ -1489,9 +1580,10 @@ bot.onText(/\/unnote (\d+)(?:\s+(.+))?/, async (msg, match) => {
 
                     const res = await ResolveUser(bot, chatId, input);
                     if (!res.ok) {
-                        return bot.sendMessage(chatId, 'Кажется я не знакома с этим пользователем', {
+                        const sent = await bot.sendMessage(chatId, 'Кажется я не знакома с этим пользователем', {
                             reply_to_message_id: msg.message_id
                         });
+                        return await deleteCommandAndResponse(chatId, msg.message_id, sent.message_id);
                     }
 
                     targetId = res.id;
@@ -1499,20 +1591,26 @@ bot.onText(/\/unnote (\d+)(?:\s+(.+))?/, async (msg, match) => {
                 }
 
 
-            if (!targetId) return bot.sendMessage(chatId, 'Кажется я не знакома с этим пользователем', { reply_to_message_id: msg.message_id});
+            if (!targetId) {
+                const sent = await bot.sendMessage(chatId, 'Кажется я не знакома с этим пользователем', { reply_to_message_id: msg.message_id});
+                return await deleteCommandAndResponse(chatId, msg.message_id, sent.message_id);
+            } 
 
             const logs = loadLogs(chatId);
             const user = getUser(logs, targetId);
             
 
             if (isNaN(index) || index < 0) {
-                return bot.sendMessage(chatId, 'Я не смогла найти такую заметку у этого пользователя. Я проверила несколько раз, но такой заметки у него точно-точно нет', {
+                const sent = await bot.sendMessage(chatId, 'Я не смогла найти такую заметку у этого пользователя. Я проверила несколько раз, но такой заметки у него точно-точно нет', {
                     reply_to_message_id: msg.message_id
                 });
+                return await deleteCommandAndResponse(chatId, msg.message_id, sent.message_id);
             }
             if (!user.notes[index]) {
-                return bot.sendMessage(chatId, 'Я не смогла найти такую заметку у этого пользователя. Я проверила несколько раз, но такой заметки у него точно-точно нет', { reply_to_message_id: msg.message_id});
+                const sent = await bot.sendMessage(chatId, 'Я не смогла найти такую заметку у этого пользователя. Я проверила несколько раз, но такой заметки у него точно-точно нет', { reply_to_message_id: msg.message_id});
+                return await deleteCommandAndResponse(chatId, msg.message_id, sent.message_id);
             }
+                
 
             const note = user.notes[index];
             note.active = false;
@@ -1539,9 +1637,9 @@ bot.onText(/\/unnote (\d+)(?:\s+(.+))?/, async (msg, match) => {
             }
 
             saveUserLogs(targetId, ulogs);
-
-            return bot.sendMessage(chatId, 'Я стёрла эту заметку', { reply_to_message_id: msg.message_id});
-
+            
+            const sent = await bot.sendMessage(chatId, 'Я стёрла эту заметку', { reply_to_message_id: msg.message_id});
+            await deleteCommandAndResponse(chatId, msg.message_id, sent.message_id);
         } catch (e) {
             console.error(e, '5');
             bot.sendMessage(chatId, 'Простите, я не смогла стереть эту заметку у пользователя. Я правда пыталась, но что-то пошло не так((', { reply_to_message_id: msg.message_id})
@@ -1584,9 +1682,10 @@ bot.onText(/\/user(?:\s+(.+))?/, async (msg, match) => {
 
                     const res = await ResolveUser(bot, chatId, input);
                     if (!res.ok) {
-                        return bot.sendMessage(chatId, 'Кажется я не знакома с этим пользователем', {
+                        const sent = await bot.sendMessage(chatId, 'Кажется я не знакома с этим пользователем', {
                             reply_to_message_id: msg.message_id
                         });
+                        return await deleteCommandAndResponse(chatId, msg.message_id, sent.message_id);
                     }
 
                     targetId = res.id;
@@ -1785,7 +1884,8 @@ bot.onText(/\/user(?:\s+(.+))?/, async (msg, match) => {
             if (sendToModChat) {
                 const settings = getChatSettings(chatId);
                 if (!settings.modchatID) {
-                    return bot.sendMessage(chatId, 'Чат модерации не настроен', { reply_to_message_id: msg.message_id });
+                    const sent = await bot.sendMessage(chatId, 'Чат модерации не настроен', { reply_to_message_id: msg.message_id });
+                    return await deleteCommandAndResponse(chatId, msg.message_id, sent.message_id);
                 }
                 
                 try {
@@ -1880,10 +1980,11 @@ bot.onText(/\/warn(?:\s+(.+))?/, async (msg, match) => {
     try {
 
         if (!isAdmin) {
-            return bot.sendMessage(chatId,
+            const sent = await bot.sendMessage(chatId,
                 'Похоже вы не обладаете правами администратора в этой группе',
                 { reply_to_message_id: msg.message_id }
             );
+            return await deleteCommandAndResponse(chatId, msg.message_id, sent.message_id);
         }
 
         let args = (match[1] || '').trim().split(/\s+/).filter(Boolean);
@@ -1903,10 +2004,11 @@ bot.onText(/\/warn(?:\s+(.+))?/, async (msg, match) => {
             const res = await ResolveUser(bot, chatId, input);
 
             if (!res.ok) {
-                return bot.sendMessage(chatId,
+                const sent = await bot.sendMessage(chatId,
                     'Кажется я не знакома с этим пользователем',
                     { reply_to_message_id: msg.message_id }
                 );
+                return await deleteCommandAndResponse(chatId, msg.message_id, sent.message_id);
             }
 
             targetId = res.id;
@@ -1914,10 +2016,11 @@ bot.onText(/\/warn(?:\s+(.+))?/, async (msg, match) => {
         }
 
         if (!targetId) {
-            return bot.sendMessage(chatId,
+            const sent = await bot.sendMessage(chatId,
                 'Кажется я не знакома с этим пользователем',
                 { reply_to_message_id: msg.message_id }
             );
+            return await deleteCommandAndResponse(chatId, msg.message_id, sent.message_id);
         }
 
         if (args.includes('-d')) {
@@ -1936,10 +2039,11 @@ bot.onText(/\/warn(?:\s+(.+))?/, async (msg, match) => {
             admins.some(a => a.user.id === targetId);
 
         if (isTargetAdmin) {
-            return bot.sendMessage(chatId,
+            const sent = await bot.sendMessage(chatId,
                 'Я не могу наказать другого администратора',
                 { reply_to_message_id: msg.message_id }
             );
+            return await deleteCommandAndResponse(chatId, msg.message_id, sent.message_id);
         }
 
         if (deleteFlag && msg.reply_to_message) {
@@ -1957,7 +2061,7 @@ bot.onText(/\/warn(?:\s+(.+))?/, async (msg, match) => {
         const mention =
             `<a href="tg://user?id=${targetId}">${member.user.first_name}</a>`;
 
-        await bot.sendMessage(
+        const sent = await bot.sendMessage(
             chatId,
             `Я выдала предупреждение пользователю ${mention}` +
             (reason ? `\nпо причине ${reason}` : ''),
@@ -1966,7 +2070,7 @@ bot.onText(/\/warn(?:\s+(.+))?/, async (msg, match) => {
                 reply_to_message_id: msg.message_id
             }
         );
-
+        await deleteCommandAndResponse(chatId, msg.message_id, sent.message_id);
         const warnEntry = {
             active: true,
             permanent: ignoreExpire,
@@ -2034,10 +2138,11 @@ bot.onText(/\/unwarn\s+(\d+)(?:\s+(.+))?/, async (msg, match) => {
     try {
 
         if (!isAdmin) {
-            return bot.sendMessage(chatId,
+            const sent = await bot.sendMessage(chatId,
                 'Похоже вы не обладаете правами администратора в этой группе',
                 { reply_to_message_id: msg.message_id }
             );
+            return await deleteCommandAndResponse(chatId, msg.message_id, sent.message_id);
         }
 
         const warnIndex = parseInt(match[1]) - 1;
@@ -2052,20 +2157,22 @@ bot.onText(/\/unwarn\s+(\d+)(?:\s+(.+))?/, async (msg, match) => {
                 (match[2] || '').trim().split(/\s+/).filter(Boolean);
 
             if (!args.length) {
-                return bot.sendMessage(chatId,
-                    'Укажите пользователя',
+                const sent = await bot.sendMessage(chatId,
+                    'Кажется я не знакома с этим пользователем',
                     { reply_to_message_id: msg.message_id }
                 );
+                return await deleteCommandAndResponse(chatId, msg.message_id, sent.message_id);
             }
 
             const res =
                 await ResolveUser(bot, chatId, args[0]);
 
             if (!res.ok) {
-                return bot.sendMessage(chatId,
+                const sent = await bot.sendMessage(chatId,
                     'Кажется я не знакома с этим пользователем',
                     { reply_to_message_id: msg.message_id }
                 );
+                return await deleteCommandAndResponse(chatId, msg.message_id, sent.message_id);
             }
 
             targetId = res.id;
@@ -2075,10 +2182,11 @@ bot.onText(/\/unwarn\s+(\d+)(?:\s+(.+))?/, async (msg, match) => {
         const user = getUser(logs, targetId);
 
         if (!user.warns[warnIndex]) {
-            return bot.sendMessage(chatId,
+            const sent = await bot.sendMessage(chatId,
                 'Я не смогла найти такое предупреждение',
                 { reply_to_message_id: msg.message_id }
             );
+            return await deleteCommandAndResponse(chatId, msg.message_id, sent.message_id);
         }
 
         const warn = user.warns[warnIndex];
@@ -2108,12 +2216,12 @@ bot.onText(/\/unwarn\s+(\d+)(?:\s+(.+))?/, async (msg, match) => {
 
         saveUserLogs(targetId, ulogs);
 
-        bot.sendMessage(
+        const sent = await bot.sendMessage(
             chatId,
             'Я сняла это предупреждение',
             { reply_to_message_id: msg.message_id }
         );
-
+        await deleteCommandAndResponse(chatId, msg.message_id, sent.message_id);
     } catch (e) {
         console.error(e);
         bot.sendMessage(
@@ -2132,19 +2240,21 @@ bot.onText(/^\/report(?:\s+(.+))?/i, async (msg, match) => {
     try {
         
         if (!settings.modchatID) {
-            return bot.sendMessage(
+             const sent = await bot.sendMessage(
                 chatId,
                 'Чат модерации не настроен, либо вы меня в него не позвали',
                 { reply_to_message_id: msg.message_id }
             );
+            return await deleteCommandAndResponse(chatId, msg.message_id, sent.message_id);
         }
 
         if (!msg.reply_to_message) {
-            return bot.sendMessage(
+            const sent = await bot.sendMessage(
                 chatId,
                 'Используйте команду ответом на сообщение нарушителя',
                 { reply_to_message_id: msg.message_id }
             );
+            return await deleteCommandAndResponse(chatId, msg.message_id, sent.message_id);
         }
         
         const reporter = msg.from;
@@ -2417,9 +2527,74 @@ bot.onText(/^\/settings(?:\s+(.+))?/, async (msg, match) => {
         return bot.sendSticker(chatId, 'CAACAgIAAxkBAAEW4xFp3TsFwtS0nT6OivaNRZQ8OmArcwACJVcAAtkTIUlsu94nV6R8wDsE', { reply_to_message_id: msg.message_id})
     }
 });
-
-
-
+bot.onText(/^\/секретнаякоманда/, async (msg) => {
+    const chatId = msg.chat.id;
+    const userId = msg.from.id;    
+        const sent = await bot.sendMessage(chatId, 'Поздравляю! Вы нашли секретную команду', {
+            reply_to_message_id: msg.message_id
+        });
+        bot.sendSticker(chatId, 'CAACAgIAAxkBAAEFGRxqSqEm2uB_teXD0QtTAii1S_rkAwACHlQAAv66sUmbwZ-omCYB-jwE', { reply_to_message_id: msg.message_id})
+        await deleteCommandAndResponse(chatId, msg.message_id, sent.message_id);
+    
+});
+bot.onText(/^\/дофигасекретнаякоманда/, async (msg) => {
+    const chatId = msg.chat.id;
+    const userId = msg.from.id;    
+        const sent = await bot.sendMessage(chatId, 'Поздравляю! Вы нашли дофига секретную команду', {
+            reply_to_message_id: msg.message_id
+        });
+        bot.sendSticker(chatId, 'CAACAgIAAxkBAAEFGRhqSqD0VJfrqNllJjkc-7kCI5O62gACDE8AAt0GEUqlsomqdO_jSDwE', { reply_to_message_id: msg.message_id})
+        await deleteCommandAndResponse(chatId, msg.message_id, sent.message_id);
+});
+bot.onText(/^!ойчто/, async (msg) => {
+    const chatId = msg.chat.id;
+    const userId = msg.from.id;
+    
+    if (msg.chat.type === 'private' || msg.chat.type === 'channel') return;
+    
+    try {
+        const admins = await bot.getChatAdministrators(chatId);
+        const isAdmin = admins.some(a => a.user.id === userId);
+        
+        if (isAdmin) return;
+        
+        const untilDate = Math.floor(Date.now() / 1000) + 5;
+        
+        await bot.restrictChatMember(chatId, userId, {
+            permissions: {
+                can_send_messages: false,
+                can_send_media_messages: false,
+                can_send_polls: false,
+                can_send_other_messages: false,
+                can_add_web_page_previews: false,
+                can_react_to_messages: false
+            },
+            until_date: untilDate
+        });
+        
+        setTimeout(async () => {
+            try {
+                await bot.deleteMessage(chatId, msg.message_id).catch(() => {});
+            } catch (e) {}
+        }, 1000);
+        
+        setTimeout(async () => {
+            try {
+                await bot.restrictChatMember(chatId, userId, {
+                    can_send_messages: true,
+                    can_send_media_messages: true,
+                    can_send_polls: true,
+                    can_send_other_messages: true,
+                    can_add_web_page_previews: true,
+                    can_react_to_messages: true
+                });
+            } catch (e) {}
+        }, 5000);
+        
+    } catch (error) {
+        console.error('!ой ошибка:', error);
+    }
+});
 
 
 bot.on('message', async (msg) => {
