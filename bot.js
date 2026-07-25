@@ -4,7 +4,7 @@ const path = require('path');
 const { send } = require('process');
 
 
-const token = '8661483092:AAFuERxDKgIHgC3jI4rdd89fsfrn9uW0sRM'; 
+const token = '8661483092:AAEODdmrRjZfN4KfIDuzO0QbWiYqjRMVMLk'; 
 const bot = new TelegramBot(token, { polling: true });
 
 
