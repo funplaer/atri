@@ -23,6 +23,7 @@ const temporaryRestrictions = {};
 const reportStates = {};
 const settingsInputStates = {};
 const settingsState = {};
+const captchaStates = {};
 //настройки
 
 const SETTINGS_NAMES = {
@@ -101,6 +102,14 @@ const SETTINGS_NAMES = {
     welcomeMessageText: {
         name: 'Текст приветственного сообщения',
         description: 'Текст, который будет отправлен новым участникам. Используйте ?name для упоминания пользователя. Например: "Добро пожаловать, ?name!"'
+    },
+    captchaEnabled: {
+        name: 'Капча',
+        description: 'Включить проверку капчи для новых участников. При включении автоматически включается приветственное сообщение'
+    },
+    captchaType: {
+        name: 'Тип капчи',
+        description: 'Тип капчи: "simple" (простая) — нужно нажать на кнопку, "hard" (сильная) — нужно решить математический пример'
     }
 };
 
@@ -157,7 +166,9 @@ const defaultSettings = {
     autoDeleteEnabled: false,
     autoDeleteDuration: '3m',
     welcomeMessageEnabled: false,
-    welcomeMessageText: 'Добро пожаловать в чат, ?name!'
+    welcomeMessageText: 'Добро пожаловать в чат, ?name!',
+    captchaEnabled: false,
+    captchaType: 'simple'
 };
 const pendingDeletions = new Map(); 
 
@@ -2829,67 +2840,7 @@ bot.on('message', async (msg) => {
         }
     } catch {}
 });
-bot.on('new_chat_members', async (msg) => {
-    const chatId = msg.chat.id;
 
-    try {
-        const settings = getChatSettings(chatId);
-        
-        if (!settings.autoRaidMode) {
-            return;
-        }
-
-        const sensitivityMap = {
-            1: 5,   
-            2: 7,   
-            3: 10,  
-            4: 15,  
-            5: 25   
-        };
-        
-        const raidThreshold = sensitivityMap[settings.raidSensitivity] || 10;
-
-        if (!joinTracker[chatId]) {
-            joinTracker[chatId] = [];
-        }
-
-        const now = Date.now();
-
-        for (const user of msg.new_chat_members) {
-            joinTracker[chatId].push({
-                id: user.id,
-                time: now
-            });
-        }
-
-        joinTracker[chatId] = joinTracker[chatId].filter(
-            entry => now - entry.time <= 15000
-        );
-
-        if (joinTracker[chatId].length >= raidThreshold) {
-            const raidUsers = [...joinTracker[chatId]];
-
-            await enableRaidMode(chatId);
-
-            const admins = await bot.getChatAdministrators(chatId);
-
-            for (const entry of raidUsers) {
-                const isAdmin = admins.some(a => a.user.id === entry.id);
-                if (!isAdmin) {
-                    try {
-                        await bot.banChatMember(chatId, entry.id);
-                        await bot.unbanChatMember(chatId, entry.id);
-                    } catch {}
-                }
-            }
-
-            joinTracker[chatId] = [];
-        }
-
-    } catch (e) {
-        console.error('Raid detector error:', e);
-    }
-});
 
 
  
@@ -4228,51 +4179,64 @@ bot.on('new_chat_members', async (msg) => {
     }
 
     // === АНТИРЕЙД ===
-    if (settings.autoRaidMode) {
-        try {
-            const sensitivityMap = { 1: 5, 2: 7, 3: 10, 4: 15, 5: 25 };
-            const raidThreshold = sensitivityMap[settings.raidSensitivity] || 10;
-
-            if (!joinTracker[chatId]) {
-                joinTracker[chatId] = [];
-            }
-
-            const now = Date.now();
-
-            for (const user of validUsers) {
-                joinTracker[chatId].push({
-                    id: user.id,
-                    time: now
-                });
-            }
-
-            joinTracker[chatId] = joinTracker[chatId].filter(
-                entry => now - entry.time <= 15000
-            );
-
-            if (joinTracker[chatId].length >= raidThreshold) {
-                const raidUsers = [...joinTracker[chatId]];
-
-                await enableRaidMode(chatId);
-
-                const admins = await bot.getChatAdministrators(chatId);
-
-                for (const entry of raidUsers) {
-                    const isAdmin = admins.some(a => a.user.id === entry.id);
-                    if (!isAdmin) {
-                        try {
-                            await bot.banChatMember(chatId, entry.id);
-                            await bot.unbanChatMember(chatId, entry.id);
-                        } catch (e) {}
-                    }
-                }
-
-                joinTracker[chatId] = [];
-            }
-        } catch (e) {
-            console.error('Антирейд ошибка:', e);
+    try {
+        const settings = getChatSettings(chatId);
+        
+        if (!settings.autoRaidMode) {
+            return;
         }
+
+        const sensitivityMap = {
+            1: 5,   
+            2: 7,   
+            3: 10,  
+            4: 15,  
+            5: 25   
+        };
+        
+        const raidThreshold = sensitivityMap[settings.raidSensitivity] || 10;
+
+        if (!joinTracker[chatId]) {
+            joinTracker[chatId] = [];
+        }
+
+        const now = Date.now();
+
+        for (const user of msg.new_chat_members) {
+            joinTracker[chatId].push({
+                id: user.id,
+                time: now
+            });
+        }
+
+        joinTracker[chatId] = joinTracker[chatId].filter(
+            entry => now - entry.time <= 15000
+        );
+
+        if (joinTracker[chatId].length >= raidThreshold) {
+            const raidUsers = [...joinTracker[chatId]];
+
+            await enableRaidMode(chatId);
+
+            const admins = await bot.getChatAdministrators(chatId);
+
+            for (const entry of raidUsers) {
+                const isAdmin = admins.some(a => a.user.id === entry.id);
+                if (!isAdmin) {
+                    try {
+                        await bot.banChatMember(chatId, entry.id);
+                        await bot.unbanChatMember(chatId, entry.id);
+                    } catch {}
+                }
+            }
+
+            joinTracker[chatId] = [];
+        }
+
+    } catch (e) {
+        console.error('Raid detector error:', e);
     }
+    
 
     // === ПРИВЕТСТВЕННОЕ СООБЩЕНИЕ ===
     if (settings.welcomeMessageEnabled) {
