@@ -875,7 +875,7 @@ bot.onText(/^\/commands/, async (msg) => {
     const chatId = msg.chat.id;
     const settings = getChatSettings(chatId);
     if(msg.chat.type === 'private') {
-        const sent = await bot.sendMessage(chatId, 'Вот, что я умею: \n <b>/help</b> — создать запрос в службу поддержки бота \n\nДля того, чтобы узнать больше о моих возможностях, используйте эту команду в чате, и в чате, в котором у вас есть права администратора, либо загляните на сайт atribot.ru (Сайт в процессе разработки) (!!ПОСЛЕ ОТКРЫТИЯ САЙТА ТЕКСТ В СКОБКАХ УДАЛИТЬ!!)', {parse_mode: 'HTML'})
+        const sent = await bot.sendMessage(chatId, 'Вот, что я умею: \n <b>/help</b> — создать запрос в службу поддержки бота \n\nДля того, чтобы узнать больше о моих возможностях, используйте эту команду в чате, и в чате, в котором у вас есть права администратора, либо загляните на сайт atri-bot.ru (Сайт в процессе разработки) (!!ПОСЛЕ ОТКРЫТИЯ САЙТА ТЕКСТ В СКОБКАХ УДАЛИТЬ!!) \n <b>/updatesecretcode</b> — обновить свой секретный код для доступа к онлайн-панели администратора (вы уже должны быть зарегистрированы в ней.', {parse_mode: 'HTML'})
         return await deleteCommandAndResponse(chatId, msg.message_id, sent.message_id);
     }
     const userId = msg.from.id;
@@ -886,7 +886,7 @@ bot.onText(/^\/commands/, async (msg) => {
         
 
         try {            
-            const text = 'Вот, что я умею: \n   <b>/settings</b> — открыть настройки чата\n   <b>/user</b> — узнать информацию о пользователе (ответом на его сообщение или вписав его Id после команды), флаг -f — узнать полную информацию о пользователе, флаг -mc — отправить ответ в чат модерации (если настроен) пример использования команды: /user 12345678910 -f -mc \n   <b>/note</b> — создать заметку о пользователе (ответом на сообщение или указав Id), пример использования команды: \note 12345678910 спамер, команда /unnote НОМЕР_ЗАМЕТКИ — удалить конкретную заметку о пользователе (ответом на сообщение или указав Id), номер заметки можно узнать в информации о пользователе \n   <b>/warn</b> — выдать пользователю предупреждение (ответом на его сообщение или указав его Id), можно указать причину предупреждения, флаг -d — бот удалит сообщение нарушителя (если команда написана ответом на него), флаг -i — предупреждение не исчезает со временем (если настроено время автоматического снятия предупреждений) пример использования команды: /warn 12345678910 Спам -d -i, команда /unwarn НОМЕР_ВАРНА (ответом на сообщение или указав Id) — снять конкретное предупреждение у пользователя, номер предупреждение можно посмотреть в полной информации о пользователе \n   <b>/mute</b> — запретить пользователю писать в чат (ответом на его сообщение или указав его Id), можно указать срок мута в минутах, часах, днях, месяцах буквами m,h,d,M соответственно (если время не указанно, то мут вечный), можно указать причину, флаг -d — бот удалит сообщение нарушителя (если команда написана ответом на него), пример использования команды: /mute 12345678910 5h Спам -d, команда /unmute (ответом на сообщение или указав Id) — досрочно снять ограничения с пользователя \n   <b>/ban</b> — заблокировать пользователя в чате (ответом на его сообщение или указав его Id), можно указать срок бана в минутах, часах, днях, месяцах буквами m,h,d,M соответственно (если время не указанно, то бан вечный), можно указать причину, флаг -d — бот удалит сообщение нарушителя (если команда написана ответом на него), пример использования команды: /ban 12345678910 5h Спам -d, команда /unban (ответом на сообщение или указав Id) — досрочно разблокировать пользователя \n <b>/raidMode</b> —   включить режим активного антиспама и антирейда, команда /unRaidMode — отключить режим агрессивного антиспама и антирейда'
+            const text = 'Вот, что я умею: \n   <b>/settings</b> — открыть настройки чата\n   <b>/user</b> — узнать информацию о пользователе (ответом на его сообщение или вписав его Id после команды), флаг -f — узнать полную информацию о пользователе, флаг -mc — отправить ответ в чат модерации (если настроен) пример использования команды: /user 12345678910 -f -mc \n   <b>/note</b> — создать заметку о пользователе (ответом на сообщение или указав Id), пример использования команды: \note 12345678910 спамер, команда /unnote НОМЕР_ЗАМЕТКИ — удалить конкретную заметку о пользователе (ответом на сообщение или указав Id), номер заметки можно узнать в информации о пользователе \n   <b>/warn</b> — выдать пользователю предупреждение (ответом на его сообщение или указав его Id), можно указать причину предупреждения, флаг -d — бот удалит сообщение нарушителя (если команда написана ответом на него), флаг -i — предупреждение не исчезает со временем (если настроено время автоматического снятия предупреждений) пример использования команды: /warn 12345678910 Спам -d -i, команда /unwarn НОМЕР_ВАРНА (ответом на сообщение или указав Id) — снять конкретное предупреждение у пользователя, номер предупреждение можно посмотреть в полной информации о пользователе \n   <b>/mute</b> — запретить пользователю писать в чат (ответом на его сообщение или указав его Id), можно указать срок мута в минутах, часах, днях, месяцах буквами m,h,d,M соответственно (если время не указанно, то мут вечный), можно указать причину, флаг -d — бот удалит сообщение нарушителя (если команда написана ответом на него), пример использования команды: /mute 12345678910 5h Спам -d, команда /unmute (ответом на сообщение или указав Id) — досрочно снять ограничения с пользователя \n   <b>/ban</b> — заблокировать пользователя в чате (ответом на его сообщение или указав его Id), можно указать срок бана в минутах, часах, днях, месяцах буквами m,h,d,M соответственно (если время не указанно, то бан вечный), можно указать причину, флаг -d — бот удалит сообщение нарушителя (если команда написана ответом на него), пример использования команды: /ban 12345678910 5h Спам -d, команда /unban (ответом на сообщение или указав Id) — досрочно разблокировать пользователя \n <b>/raidMode</b> — включить режим активного антиспама и антирейда, команда /unRaidMode — отключить режим агрессивного антиспама и антирейда \n <b>/onlinepanel</b> — получить доступ к онлайн-панели администрации \n <b>/updateonlineadmins</b> — обновить список администраторов в онлайн-панели'
             if(!isAdmin) {
                 const sent = await bot.sendMessage(chatId, 'Вот, что я умею: \n   <b>/user</b> — узнать информацию о себе \n   <b>/report</b> — сообщить о нарушителе в чате (ответом на его сообщение) \n   <b>/help</b> — создать запрос в службу поддержки бота', {parse_mode: 'HTML', reply_to_message_id: msg.message_id})
                 return await deleteCommandAndResponse(chatId, msg.message_id, sent.message_id);
@@ -3843,4 +3843,233 @@ bot.on('message', async (msg) => {
 
 
 
+const DATA_FILE = path.join(__dirname, 'online_panel_data.json');
 
+function generateSecretCode() {
+    const chars = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789=+-_)(*?:%;№"!/\|,.><~';
+    let code = '';
+    for (let i = 0; i < 13; i++) {
+        code += chars.charAt(Math.floor(Math.random() * chars.length));
+    }
+    return code;
+}
+
+function readData() {
+    try {
+        if (fs.existsSync(DATA_FILE)) {
+            const data = fs.readFileSync(DATA_FILE, 'utf8');
+            return JSON.parse(data);
+        }
+    } catch (error) {
+        console.error('Ошибка чтения файла:', error);
+    }
+    return {};
+}
+
+function writeData(data) {
+    try {
+        fs.writeFileSync(DATA_FILE, JSON.stringify(data, null, 2), 'utf8');
+        return true;
+    } catch (error) {
+        console.error('Ошибка записи в файл:', error);
+        return false;
+    }
+}
+
+async function handleOnlinePanel(bot, msg) {
+    const chatId = msg.chat.id;
+    const userId = msg.from.id;
+    const username = msg.from.username || msg.from.first_name || 'Unknown';
+    const chatType = msg.chat.type;
+
+    if (chatType === 'private' || chatType === 'channel') {
+        return bot.sendMessage(chatId, 'Используйте эту команду только в чате'); 
+    }
+
+    try {
+        const chatMember = await bot.getChatMember(chatId, userId);
+        if (!chatMember || !['administrator', 'creator'].includes(chatMember.status)) {
+            return;
+        }
+
+        try {
+            await bot.sendChatAction(userId, 'typing');
+        } catch (error) {
+            await bot.sendMessage(chatId, 'Пожалуйста, напишите /start мне в личные сообщения, чтобы я могла отправить вам ваш уникальный код.', { reply_to_message_id: msg.message_id});
+            return;
+        }
+
+        let data = readData();
+
+        const userExists = data[userId] !== undefined;
+
+        if (userExists) {
+            const userData = data[userId];
+            
+            if (userData.chats && userData.chats.includes(chatId)) {
+                
+                await bot.sendMessage(chatId, 'Этот чат уже зарегистрирован в моей системе.', { reply_to_message_id: msg.message_id});
+                return;
+            }
+
+            if (!userData.chats) {
+                userData.chats = [];
+            }
+            userData.chats.push(chatId);
+            
+            userData.username = username;
+            
+            if (writeData(data)) {
+                await bot.sendMessage(chatId, 'Я успешно добавила этот чат в систему!', { reply_to_message_id: msg.message_id});
+            }
+            return;
+        }
+
+        const secretCode = generateSecretCode();
+        
+        data[userId] = {
+            chats: [chatId],
+            username: username,
+            secretCode: secretCode,
+            registeredAt: new Date().toISOString()
+        };
+
+        if (writeData(data)) {
+            try {
+                await bot.sendMessage(userId, 
+                    `Ваш уникальный код:\n\n<code>${secretCode}</code>\n\n Никому не сообщайте этот код, даже оператору службы поддержки бота!\n\nДля смены кода используйте команду /updatesecretcode или напишите в поддержку (команда /help)`,
+                    { parse_mode: 'HTML' }
+                );
+                
+                await bot.sendMessage(chatId, 'Я вас зарегичтрировавла! Код отправлен вам в личные сообщения.'), { reply_to_message_id: msg.message_id};
+            } catch (error) {
+                await bot.sendMessage(chatId, 'Я не смогла отправить вам код в ЛС. Пожалуйста, напишите мне /start в личные сообщения.', { reply_to_message_id: msg.message_id});
+            }
+        }
+    } catch (error) {
+        console.error('Ошибка в /onlinepanel:', error);
+        await bot.sendMessage(chatId, 'Простите, я не смогла это сделать. Я правда пыталась, но что-то пошло не так', { reply_to_message_id: msg.message_id});
+        return bot.sendSticker(chatId, 'CAACAgIAAxkBAAEW4xFp3TsFwtS0nT6OivaNRZQ8OmArcwACJVcAAtkTIUlsu94nV6R8wDsE', { reply_to_message_id: msg.message_id})
+    }
+}
+
+async function handleUpdateSecretCode(bot, msg) {
+    const chatId = msg.chat.id;
+    const userId = msg.from.id;
+
+    if (msg.chat.type !== 'private') {
+        await bot.sendMessage(chatId, 'Эта команда доступна только в личных сообщениях.', { reply_to_message_id: msg.message_id});
+        return;
+    }
+
+    try {
+        let data = readData();
+        
+        if (!data[userId]) {
+            await bot.sendMessage(chatId, 'Вы не зарегистрированы в системе. Используйте /onlinepanel в чате, где вы администратор.');
+            return;
+        }
+
+        const newCode = generateSecretCode();
+        data[userId].secretCode = newCode;
+        data[userId].updatedAt = new Date().toISOString();
+
+        if (writeData(data)) {
+            await bot.sendMessage(chatId, 
+                `Ваш код обновлён!\n\nНовый код:\n<code>${newCode}</code>\n\nНикому не сообщайте этот код, даже оператору службы поддержки бота!`,
+                { parse_mode: 'HTML' }
+            );
+        }
+    } catch (error) {
+        console.error('Ошибка в /updatesecretcode:', error);
+        await bot.sendMessage(chatId, 'Простите, я не смогла это сделать. Я правда пыталась, но что-то пошло не так', { reply_to_message_id: msg.message_id});
+        return bot.sendSticker(chatId, 'CAACAgIAAxkBAAEW4xFp3TsFwtS0nT6OivaNRZQ8OmArcwACJVcAAtkTIUlsu94nV6R8wDsE', { reply_to_message_id: msg.message_id})
+    }
+}
+
+async function handleUpdateOnlineAdmins(bot, msg) {
+    const chatId = msg.chat.id;
+    const userId = msg.from.id;
+    const chatType = msg.chat.type;
+
+    if (chatType === 'private' || chatType === 'channel') {
+        return;
+    }
+
+    try {
+        const chatMember = await bot.getChatMember(chatId, userId);
+        if (!chatMember || !['administrator', 'creator'].includes(chatMember.status)) {
+            return; 
+        }
+
+        let data = readData();
+        let removedUsers = [];
+        let modified = false;
+
+        for (const [userIdKey, userData] of Object.entries(data)) {
+            if (userData.chats && userData.chats.includes(chatId)) {
+                try {
+                    const memberInfo = await bot.getChatMember(chatId, parseInt(userIdKey));
+                    
+                    if (!memberInfo || !['administrator', 'creator'].includes(memberInfo.status)) {
+                        
+                        const chatIndex = userData.chats.indexOf(chatId);
+                        if (chatIndex !== -1) {
+                            userData.chats.splice(chatIndex, 1);
+                            removedUsers.push(userIdKey);
+                            modified = true;
+                            
+                            if (userData.chats.length === 0) {
+                                delete data[userIdKey];
+                            }
+                        }
+                    }
+                } catch (error) {
+                    const chatIndex = userData.chats.indexOf(chatId);
+                    if (chatIndex !== -1) {
+                        userData.chats.splice(chatIndex, 1);
+                        removedUsers.push(userIdKey);
+                        modified = true;
+                        
+                        if (userData.chats.length === 0) {
+                            delete data[userIdKey];
+                        }
+                    }
+                }
+            }
+        }
+
+        if (modified) {
+            if (writeData(data)) {
+                let response = 'Обновление завершено.\n';
+                if (removedUsers.length > 0) {
+                    response += `\nУдалены пользователи, переставшие быть администраторами: ${removedUsers.join(', ')}`;
+                } else {
+                    response += '\nВсе администраторы остаются в системе.';
+                }
+                await bot.sendMessage(chatId, response);
+            }
+        } else {
+            await bot.sendMessage(chatId, 'Не найдено пользователей, которых нужно удалить.');
+        }
+    } catch (error) {
+        console.error('Ошибка в /updateonlineadmins:', error);
+        await bot.sendMessage(chatId, 'Простите, я не смогла это сделать. Я правда пыталась, но что-то пошло не так', { reply_to_message_id: msg.message_id});
+        return bot.sendSticker(chatId, 'CAACAgIAAxkBAAEW4xFp3TsFwtS0nT6OivaNRZQ8OmArcwACJVcAAtkTIUlsu94nV6R8wDsE', { reply_to_message_id: msg.message_id})
+    }
+}
+
+
+module.exports = {
+    handleOnlinePanel,
+    handleUpdateSecretCode,
+    handleUpdateOnlineAdmins,
+    readData,
+    writeData,
+    generateSecretCode
+};
+
+
+bot.onText(/\/onlinepanel/, (msg) => handleOnlinePanel(bot, msg));
+bot.onText(/\/updatesecretcode/, (msg) => handleUpdateSecretCode(bot, msg));
+bot.onText(/\/updateonlineadmins/, (msg) => handleUpdateOnlineAdmins(bot, msg));
