@@ -22,6 +22,7 @@ const RATINGS_FILE = path.join(SUPPORT_DATA_DIR, 'ratings.json');
 const temporaryRestrictions = {};
 const reportStates = {};
 const settingsInputStates = {};
+const settingsState = {};
 //настройки
 
 const SETTINGS_NAMES = {
@@ -95,7 +96,34 @@ const SETTINGS_NAMES = {
     }
 };
 
+const SETTINGS_PAGE_SIZE = 6;
+function getSettingsKeys() {
+    return Object.keys(SETTINGS_NAMES);
+}
 
+function getTotalSettingsPages() {
+    const keys = getSettingsKeys();
+    return Math.ceil(keys.length / SETTINGS_PAGE_SIZE);
+}
+
+function getSettingsPage(page) {
+    const keys = getSettingsKeys();
+    const totalPages = getTotalSettingsPages();
+    if (page < 0) page = 0;
+    if (page >= totalPages) page = totalPages - 1;
+    
+    const start = page * SETTINGS_PAGE_SIZE;
+    const end = Math.min(start + SETTINGS_PAGE_SIZE, keys.length);
+    const pageKeys = keys.slice(start, end);
+    
+    return {
+        keys: pageKeys,
+        page: page,
+        totalPages: totalPages,
+        hasPrev: page > 0,
+        hasNext: page < totalPages - 1
+    };
+}
 const SETTINGS_DIR = path.join(__dirname, 'chat_settings');
 
 if (!fs.existsSync(SETTINGS_DIR)) fs.mkdirSync(SETTINGS_DIR);
@@ -286,23 +314,32 @@ function getNestedValue(obj, key) {
     return obj[key];
 }
 
-async function showSettingsMenu(chatId, messageId = null) {
+async function showSettingsMenu(chatId, messageId = null, page = 0) {
     const settings = getChatSettings(chatId);
+    const pageData = getSettingsPage(page);
     
     let text = '<b>Настройки чата</b>\n\n';
-    text += 'Нажмите на кнопку с названием настройки, чтобы изменить её.\n\n';
+    text += `Страница ${pageData.page + 1} из ${pageData.totalPages}\n\n`;
 
     const buttons = [];
-    const keys = Object.keys(SETTINGS_NAMES);
     
-    const sortedKeys = keys.sort();
-    
-    for (const key of sortedKeys) {
+    for (const key of pageData.keys) {
         const displayName = getSettingDisplayName(key);
         buttons.push([{ 
             text: displayName, 
             callback_data: `settings_edit_${key}` 
         }]);
+    }
+
+    const navButtons = [];
+    if (pageData.hasPrev) {
+        navButtons.push({ text: '<', callback_data: `settings_page_${pageData.page - 1}` });
+    }
+    if (pageData.hasNext) {
+        navButtons.push({ text: '>', callback_data: `settings_page_${pageData.page + 1}` });
+    }
+    if (navButtons.length > 0) {
+        buttons.push(navButtons);
     }
 
     const keyboard = {
@@ -372,6 +409,10 @@ async function showSettingEdit(chatId, messageId, key) {
     const keyboard = {
         inline_keyboard: buttons
     };
+
+    if (settingsInputStates[chatId]) {
+        settingsInputStates[chatId].returnPage = settingsInputStates[chatId].currentPage || 0;
+    }
 
     try {
         await bot.editMessageText(text, {
@@ -2518,6 +2559,7 @@ bot.onText(/^\/settings(?:\s+(.+))?/, async (msg, match) => {
             settingsInputStates[chatId] = {};
         }
         settingsInputStates[chatId].menuMessageId = sent.message_id;
+        settingsInputStates[chatId].currentPage = 0;
 
     } catch (e) {
         console.error('Settings error:', e);
@@ -3311,6 +3353,31 @@ bot.on('callback_query', async (query) => {
                 await showSettingEdit(chatId, messageId, key);
                 return;
             }
+            if (data === 'settings_back') {
+                if (!settingsInputStates[chatId]) {
+                    settingsInputStates[chatId] = {};
+                }
+                // Используем сохранённую страницу, если есть
+                const returnPage = settingsInputStates[chatId].returnPage || 0;
+                // Очищаем сохранённую страницу после использования
+                delete settingsInputStates[chatId].returnPage;
+                // Обновляем текущую страницу
+                settingsInputStates[chatId].currentPage = returnPage;
+                await showSettingsMenu(chatId, messageId, returnPage);
+                return;
+            }
+
+            if (data.startsWith('settings_page_')) {
+                const page = parseInt(data.replace('settings_page_', ''));
+                if (!settingsInputStates[chatId]) {
+                    settingsInputStates[chatId] = {};
+                }
+                settingsInputStates[chatId].currentPage = page;
+                // Если мы на странице настроек, очищаем сохранённую страницу возврата
+                delete settingsInputStates[chatId].returnPage;
+                await showSettingsMenu(chatId, messageId, page);
+                return;
+            }
 
             if (data.startsWith('settings_set_')) {
                 const parts = data.replace('settings_set_', '').split('_');
@@ -3584,6 +3651,8 @@ bot.on('callback_query', async (query) => {
             return;
         }
 
+        
+
         if (data.startsWith('rate_')) {
             const parts = data.split('_');
             const rate = parseInt(parts[1]);
@@ -3625,6 +3694,7 @@ bot.on('callback_query', async (query) => {
             await bot.answerCallbackQuery(query.id, { text: 'Ошибка' });
         } catch (err) {}
     }
+    
 });
 
 bot.on('message', async (msg) => {
