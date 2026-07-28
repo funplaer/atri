@@ -93,6 +93,14 @@ const SETTINGS_NAMES = {
     autoDeleteDuration: {
         name: 'Время до автоудаления',
         description: 'Через сколько удалять сообщения бота и команды (m - минуты, h - часы, d - дни, M - месяцы)'
+    },
+    welcomeMessageEnabled: {
+        name: 'Приветственное сообщение',
+        description: 'Включить отправку приветственного сообщения новым участникам чата'
+    },
+    welcomeMessageText: {
+        name: 'Текст приветственного сообщения',
+        description: 'Текст, который будет отправлен новым участникам. Используйте ?name для упоминания пользователя. Например: "Добро пожаловать, ?name!"'
     }
 };
 
@@ -147,7 +155,9 @@ const defaultSettings = {
     autoRaidMode: false,
     raidSensitivity: 3,
     autoDeleteEnabled: false,
-    autoDeleteDuration: '3m'
+    autoDeleteDuration: '3m',
+    welcomeMessageEnabled: false,
+    welcomeMessageText: 'Добро пожаловать в чат, ?name!'
 };
 const pendingDeletions = new Map(); 
 
@@ -2800,7 +2810,6 @@ bot.on('message', async (msg) => {
 bot.on('message', async (msg) => {
     try {
         const serviceFields = [
-            'new_chat_members',
             'left_chat_member',
             'new_chat_title',
             'new_chat_photo',
@@ -4143,3 +4152,145 @@ module.exports = {
 bot.onText(/\/onlinepanel/, (msg) => handleOnlinePanel(bot, msg));
 bot.onText(/\/updatesecretcode/, (msg) => handleUpdateSecretCode(bot, msg));
 bot.onText(/\/updateonlineadmins/, (msg) => handleUpdateOnlineAdmins(bot, msg));
+
+// Полностью переписанный обработчик new_chat_members с поддержкой ?name
+bot.on('new_chat_members', async (msg) => {
+    // Проверяем, что это действительно событие с новыми участниками
+    if (!msg || !msg.new_chat_members) {
+        return;
+    }
+
+    const chatId = msg.chat.id;
+    
+    // Пытаемся получить список участников безопасно
+    let members = [];
+    try {
+        if (Array.isArray(msg.new_chat_members)) {
+            members = msg.new_chat_members;
+        } else {
+            members = Object.values(msg.new_chat_members);
+        }
+    } catch (e) {
+        return;
+    }
+
+    if (!members || members.length === 0) {
+        return;
+    }
+
+    // Получаем ID бота безопасно
+    const botId = bot.botInfo ? bot.botInfo.id : null;
+
+    // Собираем только валидных пользователей
+    const validUsers = [];
+    for (const user of members) {
+        // Проверяем, что пользователь существует и это объект
+        if (!user || typeof user !== 'object') {
+            continue;
+        }
+        
+        // Проверяем наличие id
+        const userId = user.id || user.user_id;
+        if (!userId) {
+            continue;
+        }
+        
+        // Проверяем, что это не бот
+        if (user.is_bot === true) {
+            continue;
+        }
+        
+        // Проверяем, что это не сам бот (если botId известен)
+        if (botId && userId === botId) {
+            continue;
+        }
+        
+        // Добавляем в список валидных
+        validUsers.push({
+            id: userId,
+            first_name: user.first_name || 'Пользователь',
+            username: user.username || null,
+            is_bot: user.is_bot || false
+        });
+    }
+
+    // Если нет валидных пользователей - выходим
+    if (validUsers.length === 0) {
+        return;
+    }
+
+    // Загружаем настройки чата
+    let settings;
+    try {
+        settings = getChatSettings(chatId);
+    } catch (e) {
+        return;
+    }
+
+    // === АНТИРЕЙД ===
+    if (settings.autoRaidMode) {
+        try {
+            const sensitivityMap = { 1: 5, 2: 7, 3: 10, 4: 15, 5: 25 };
+            const raidThreshold = sensitivityMap[settings.raidSensitivity] || 10;
+
+            if (!joinTracker[chatId]) {
+                joinTracker[chatId] = [];
+            }
+
+            const now = Date.now();
+
+            for (const user of validUsers) {
+                joinTracker[chatId].push({
+                    id: user.id,
+                    time: now
+                });
+            }
+
+            joinTracker[chatId] = joinTracker[chatId].filter(
+                entry => now - entry.time <= 15000
+            );
+
+            if (joinTracker[chatId].length >= raidThreshold) {
+                const raidUsers = [...joinTracker[chatId]];
+
+                await enableRaidMode(chatId);
+
+                const admins = await bot.getChatAdministrators(chatId);
+
+                for (const entry of raidUsers) {
+                    const isAdmin = admins.some(a => a.user.id === entry.id);
+                    if (!isAdmin) {
+                        try {
+                            await bot.banChatMember(chatId, entry.id);
+                            await bot.unbanChatMember(chatId, entry.id);
+                        } catch (e) {}
+                    }
+                }
+
+                joinTracker[chatId] = [];
+            }
+        } catch (e) {
+            console.error('Антирейд ошибка:', e);
+        }
+    }
+
+    // === ПРИВЕТСТВЕННОЕ СООБЩЕНИЕ ===
+    if (settings.welcomeMessageEnabled) {
+        for (const user of validUsers) {
+            try {
+                let welcomeText = settings.welcomeMessageText || 'Добро пожаловать в чат, ?name!';
+                
+                // Заменяем ?name на упоминание пользователя
+                const mention = `<a href="tg://user?id=${user.id}">${user.first_name}</a>`;
+                welcomeText = welcomeText.replace(/\?name/g, mention);
+                
+                await bot.sendMessage(chatId, welcomeText, {
+                    parse_mode: 'HTML',
+                    reply_to_message_id: msg.message_id
+                });
+            } catch (e) {
+                console.error('Ошибка отправки приветствия:', e);
+            }
+        }
+    }
+});
