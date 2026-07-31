@@ -2959,7 +2959,219 @@ bot.on('message', async (msg) => {
     } catch {}
 });
 
+bot.on('new_chat_members', async (msg) => {
+    if (!msg || !msg.new_chat_members) {
+        return;
+    }
 
+    const chatId = msg.chat.id;
+    
+    let members = [];
+    try {
+        if (Array.isArray(msg.new_chat_members)) {
+            members = msg.new_chat_members;
+        } else {
+            members = Object.values(msg.new_chat_members);
+        }
+    } catch (e) {
+        return;
+    }
+
+    if (!members || members.length === 0) {
+        return;
+    }
+
+    const botId = bot.botInfo ? bot.botInfo.id : null;
+    const validUsers = [];
+    for (const user of members) {
+        if (!user || typeof user !== 'object') continue;
+        const userId = user.id || user.user_id;
+        if (!userId) continue;
+        if (user.is_bot === true) continue;
+        if (botId && userId === botId) continue;
+        validUsers.push({
+            id: userId,
+            first_name: user.first_name || 'Пользователь',
+            username: user.username || null
+        });
+    }
+
+    if (validUsers.length === 0) {
+        return;
+    }
+
+    let settings;
+    try {
+        settings = getChatSettings(chatId);
+    } catch (e) {
+        return;
+    }
+
+    if (raidModeChats.has(chatId)) {
+        try {
+            const admins = await bot.getChatAdministrators(chatId);
+            for (const user of validUsers) {
+                const isAdmin = admins.some(a => a.user.id === user.id);
+                if (!isAdmin) {
+                    try {
+                        await bot.banChatMember(chatId, user.id);
+                        await bot.unbanChatMember(chatId, user.id);
+                    } catch (e) {
+                        console.error('Raid mode kick error:', e);
+                    }
+                }
+            }
+        } catch (e) {
+            console.error('Raid mode error:', e);
+        }
+        return;
+    }
+
+    let raidDetected = false;
+    try {
+        if (settings.autoRaidMode) {
+            const sensitivityMap = {                
+                1: 5,   
+                2: 7,   
+                3: 10,  
+                4: 15,  
+                5: 25   
+            };
+            
+            const raidThreshold = sensitivityMap[settings.raidSensitivity] || 10;
+
+            if (!joinTracker[chatId]) {
+                joinTracker[chatId] = [];
+            }
+
+            const now = Date.now();
+
+            for (const user of validUsers) {
+                joinTracker[chatId].push({
+                    id: user.id,
+                    time: now
+                });
+            }
+
+            joinTracker[chatId] = joinTracker[chatId].filter(
+                entry => now - entry.time <= 15000
+            );
+
+            if (joinTracker[chatId].length >= raidThreshold) {
+                raidDetected = true;
+                const raidUsers = [...joinTracker[chatId]];
+
+                await enableRaidMode(chatId);
+
+                const admins = await bot.getChatAdministrators(chatId);
+                for (const entry of raidUsers) {
+                    const isAdmin = admins.some(a => a.user.id === entry.id);
+                    if (!isAdmin) {
+                        try {
+                            await bot.banChatMember(chatId, entry.id);
+                            await bot.unbanChatMember(chatId, entry.id);
+                        } catch (e) {
+                            console.error('Raid ban error:', e);
+                        }
+                    }
+                }
+
+                joinTracker[chatId] = [];
+            }
+        }
+    } catch (e) {
+        console.error('Raid detector error:', e);
+    }
+
+    if (raidDetected) {
+        return;
+    }
+
+    if (settings.captchaEnabled) {
+        for (const user of validUsers) {
+            try {
+                await bot.restrictChatMember(chatId, user.id, {
+                    permissions: {
+                        can_send_messages: false,
+                        can_send_media_messages: false,
+                        can_send_polls: false,
+                        can_send_other_messages: false,
+                        can_add_web_page_previews: false,
+                        can_react_to_messages: false
+                    }
+                });
+
+                if (!captchaStates[chatId]) {
+                    captchaStates[chatId] = {};
+                }
+                
+                const captchaType = settings.captchaType || 'simple';
+                
+                let welcomeText = settings.welcomeMessageText || 'Добро пожаловать в чат, ?name!';
+                const mention = `<a href="tg://user?id=${user.id}">${user.first_name}</a>`;
+                welcomeText = welcomeText.replace(/\?name/g, mention);
+                
+                let keyboard;
+                let captchaData = {
+                    messageId: null,
+                    sentAt: Date.now(),
+                    type: captchaType
+                };
+                
+                if (captchaType === 'hard') {
+                    const problem = generateMathProblem();
+                    captchaData.correctAnswer = problem.correctAnswer;
+                    welcomeText += `\n\nРешите пример: ${problem.question}`;
+                    keyboard = {
+                        inline_keyboard: problem.options.map(opt => [
+                            { text: String(opt), callback_data: `captcha_${user.id}_${opt}` }
+                        ])
+                    };
+                } else {
+                    welcomeText += '\n\nДля того, чтобы писать в чат, нажмите на кнопку ниже.';
+                    keyboard = {
+                        inline_keyboard: [
+                            [{ 
+                                text: 'Я человек!', 
+                                callback_data: `captcha_${user.id}_verify`
+                            }]
+                        ]
+                    };
+                }
+                
+                captchaStates[chatId][user.id] = captchaData;
+
+                const sentMsg = await bot.sendMessage(chatId, welcomeText, {
+                    parse_mode: 'HTML',
+                    reply_to_message_id: msg.message_id,
+                    reply_markup: keyboard
+                });
+
+                if (captchaStates[chatId] && captchaStates[chatId][user.id]) {
+                    captchaStates[chatId][user.id].messageId = sentMsg.message_id;
+                }
+
+            } catch (e) {
+                console.error('Ошибка отправки капчи:', e);
+            }
+        }
+    } else if (settings.welcomeMessageEnabled) {
+        for (const user of validUsers) {
+            try {
+                let welcomeText = settings.welcomeMessageText || 'Добро пожаловать в чат, ?name!';
+                const mention = `<a href="tg://user?id=${user.id}">${user.first_name}</a>`;
+                welcomeText = welcomeText.replace(/\?name/g, mention);
+                
+                await bot.sendMessage(chatId, welcomeText, {
+                    parse_mode: 'HTML',
+                    reply_to_message_id: msg.message_id
+                });
+            } catch (e) {
+                console.error('Ошибка отправки приветствия:', e);
+            }
+        }
+    }
+});
 
  
 bot.on('message', async (msg) => {
@@ -3998,7 +4210,7 @@ bot.on('message', async (msg) => {
                 return bot.sendMessage(chatId, 'Пожалуйста, введите корректное число.');
             }
             if (key === 'raidSensitivity') {
-                if (parsedValue < 1 || parsedValue > 5 || !Number.isInteger(parsedValue)) {
+                if (parsedValue < 0 || parsedValue > 5 || !Number.isInteger(parsedValue)) {
                     return bot.sendMessage(chatId, 'Пожалуйста, введите целое число от 1 до 5.');
                 }
             }
@@ -4401,348 +4613,3 @@ bot.onText(/\/onlinepanel/, (msg) => handleOnlinePanel(bot, msg));
 bot.onText(/\/updatesecretcode/, (msg) => handleUpdateSecretCode(bot, msg));
 bot.onText(/\/updateonlineadmins/, (msg) => handleUpdateOnlineAdmins(bot, msg));
 
-// Полностью переписанный обработчик new_chat_members с поддержкой ?name
-bot.on('new_chat_members', async (msg) => {
-    // Проверяем, что это действительно событие с новыми участниками
-    if (!msg || !msg.new_chat_members) {
-        return;
-    }
-
-    const chatId = msg.chat.id;
-    
-    // Пытаемся получить список участников безопасно
-    let members = [];
-    try {
-        if (Array.isArray(msg.new_chat_members)) {
-            members = msg.new_chat_members;
-        } else {
-            members = Object.values(msg.new_chat_members);
-        }
-    } catch (e) {
-        return;
-    }
-
-    if (!members || members.length === 0) {
-        return;
-    }
-
-    // Получаем ID бота безопасно
-    const botId = bot.botInfo ? bot.botInfo.id : null;
-
-    // Собираем только валидных пользователей
-    const validUsers = [];
-    for (const user of members) {
-        // Проверяем, что пользователь существует и это объект
-        if (!user || typeof user !== 'object') {
-            continue;
-        }
-        
-        // Проверяем наличие id
-        const userId = user.id || user.user_id;
-        if (!userId) {
-            continue;
-        }
-        
-        // Проверяем, что это не бот
-        if (user.is_bot === true) {
-            continue;
-        }
-        
-        // Проверяем, что это не сам бот (если botId известен)
-        if (botId && userId === botId) {
-            continue;
-        }
-        
-        // Добавляем в список валидных
-        validUsers.push({
-            id: userId,
-            first_name: user.first_name || 'Пользователь',
-            username: user.username || null,
-            is_bot: user.is_bot || false
-        });
-    }
-
-    // Если нет валидных пользователей - выходим
-    if (validUsers.length === 0) {
-        return;
-    }
-
-    // Загружаем настройки чата
-    let settings;
-    try {
-        settings = getChatSettings(chatId);
-    } catch (e) {
-        return;
-    }
-
-    // === АНТИРЕЙД ===
-    try {
-        if (!settings.autoRaidMode) {
-            // Если антирейд выключен, всё равно продолжаем
-        } else {
-            const sensitivityMap = {
-                1: 5,   
-                2: 7,   
-                3: 10,  
-                4: 15,  
-                5: 25   
-            };
-            
-            const raidThreshold = sensitivityMap[settings.raidSensitivity] || 10;
-
-            if (!joinTracker[chatId]) {
-                joinTracker[chatId] = [];
-            }
-
-            const now = Date.now();
-
-            for (const user of validUsers) {
-                joinTracker[chatId].push({
-                    id: user.id,
-                    time: now
-                });
-            }
-
-            joinTracker[chatId] = joinTracker[chatId].filter(
-                entry => now - entry.time <= 15000
-            );
-
-            if (joinTracker[chatId].length >= raidThreshold) {
-                const raidUsers = [...joinTracker[chatId]];
-
-                await enableRaidMode(chatId);
-
-                const admins = await bot.getChatAdministrators(chatId);
-
-                for (const entry of raidUsers) {
-                    const isAdmin = admins.some(a => a.user.id === entry.id);
-                    if (!isAdmin) {
-                        try {
-                            await bot.banChatMember(chatId, entry.id);
-                            await bot.unbanChatMember(chatId, entry.id);
-                        } catch {}
-                    }
-                }
-
-                joinTracker[chatId] = [];
-            }
-        }
-    } catch (e) {
-        console.error('Raid detector error:', e);
-    }
-
-    // === КАПЧА И ПРИВЕТСТВЕННОЕ СООБЩЕНИЕ ===
-if (settings.captchaEnabled) {
-    // Если капча включена, автоматически включаем приветственное сообщение
-    for (const user of validUsers) {
-        try {
-            // Ограничиваем пользователя - запрещаем писать
-            await bot.restrictChatMember(chatId, user.id, {
-                permissions: {
-                    can_send_messages: false,
-                    can_send_media_messages: false,
-                    can_send_polls: false,
-                    can_send_other_messages: false,
-                    can_add_web_page_previews: false,
-                    can_react_to_messages: false
-                }
-            });
-
-            // Сохраняем состояние капчи для пользователя
-            if (!captchaStates[chatId]) {
-                captchaStates[chatId] = {};
-            }
-            
-            // Определяем тип капчи
-            const captchaType = settings.captchaType || 'simple';
-            
-            // Формируем текст приветствия с капчей
-            let welcomeText = settings.welcomeMessageText || 'Добро пожаловать в чат, ?name!';
-            const mention = `<a href="tg://user?id=${user.id}">${user.first_name}</a>`;
-            welcomeText = welcomeText.replace(/\?name/g, mention);
-            
-            let keyboard;
-            let captchaData = {
-                messageId: null,
-                sentAt: Date.now(),
-                type: captchaType
-            };
-            
-            if (captchaType === 'hard') {
-                // Математическая капча
-                const problem = generateMathProblem();
-                captchaData.correctAnswer = problem.correctAnswer;
-                
-                welcomeText += `\n\nРешите пример: ${problem.question}`;
-                
-                keyboard = {
-                    inline_keyboard: problem.options.map(opt => [
-                        { text: String(opt), callback_data: `captcha_${user.id}_${opt}` }
-                    ])
-                };
-            } else {
-                // Простая капча - кнопка
-                welcomeText += '\n\nДля того, чтобы писать в чат, нажмите на кнопку ниже.';
-                
-                keyboard = {
-                    inline_keyboard: [
-                        [{ 
-                            text: 'Я человек!', 
-                            callback_data: `captcha_${user.id}_verify`
-                        }]
-                    ]
-                };
-            }
-            
-            captchaStates[chatId][user.id] = captchaData;
-
-            // Отправляем сообщение с кнопкой
-            const sentMsg = await bot.sendMessage(chatId, welcomeText, {
-                parse_mode: 'HTML',
-                reply_to_message_id: msg.message_id,
-                reply_markup: keyboard
-            });
-
-            // Сохраняем ID сообщения для последующего редактирования
-            if (captchaStates[chatId] && captchaStates[chatId][user.id]) {
-                captchaStates[chatId][user.id].messageId = sentMsg.message_id;
-            }
-
-        } catch (e) {
-            console.error('Ошибка отправки капчи:', e);
-        }
-    }
-} else if (settings.welcomeMessageEnabled) {
-    // Если капча выключена, но приветствие включено - отправляем обычное приветствие
-    for (const user of validUsers) {
-        try {
-            let welcomeText = settings.welcomeMessageText || 'Добро пожаловать в чат, ?name!';
-            const mention = `<a href="tg://user?id=${user.id}">${user.first_name}</a>`;
-            welcomeText = welcomeText.replace(/\?name/g, mention);
-            
-            await bot.sendMessage(chatId, welcomeText, {
-                parse_mode: 'HTML',
-                reply_to_message_id: msg.message_id
-            });
-        } catch (e) {
-            console.error('Ошибка отправки приветствия:', e);
-        }
-    }
-}
-});
-
-bot.onText(/^\/skipcaptcha(?:\s+(.+))?/, async (msg, match) => {
-    const chatId = msg.chat.id;
-    const userId = msg.from.id;
-
-    if (msg.chat.type === 'private' || msg.chat.type === 'channel') {
-        return bot.sendMessage(chatId, 'Я могу сделать это только в группе');
-    }
-
-    try {
-        // Проверяем, является ли пользователь админом
-        const admins = await bot.getChatAdministrators(chatId);
-        const isAdmin = admins.some(a => a.user.id === userId);
-
-        if (!isAdmin) {
-            const sent = await bot.sendMessage(chatId, 'Похоже вы не обладаете правами администратора в этой группе', {
-                reply_to_message_id: msg.message_id
-            });
-            return await deleteCommandAndResponse(chatId, msg.message_id, sent.message_id);
-        }
-
-        let targetUserId = null;
-
-        // Проверяем, есть ли ответ на сообщение
-        if (msg.reply_to_message) {
-            targetUserId = msg.reply_to_message.from.id;
-        } else {
-            // Проверяем аргументы команды
-            let args = (match[1] || '').trim().split(/\s+/).filter(Boolean);
-            if (args.length) {
-                const entityMention = getUserFromEntities(msg);
-                let input = entityMention || args[0];
-
-                const res = await ResolveUser(bot, chatId, input);
-                if (res.ok) {
-                    targetUserId = res.id;
-                }
-            }
-        }
-
-        if (!targetUserId) {
-            const sent = await bot.sendMessage(chatId, 'Укажите пользователя (ответом на сообщение или через ID)', {
-                reply_to_message_id: msg.message_id
-            });
-            return await deleteCommandAndResponse(chatId, msg.message_id, sent.message_id);
-        }
-
-        // Проверяем, есть ли капча для этого пользователя
-        if (!captchaStates[chatId] || !captchaStates[chatId][targetUserId]) {
-            const sent = await bot.sendMessage(chatId, 'Этот пользователь не проходит капчу или уже прошёл её.', {
-                reply_to_message_id: msg.message_id
-            });
-            return await deleteCommandAndResponse(chatId, msg.message_id, sent.message_id);
-        }
-
-        const captchaData = captchaStates[chatId][targetUserId];
-        const messageId = captchaData.messageId;
-
-        // Разрешаем пользователю писать в чат
-        await bot.restrictChatMember(chatId, targetUserId, {
-            can_send_messages: true,
-            can_send_media_messages: true,
-            can_send_polls: true,
-            can_send_other_messages: true,
-            can_add_web_page_previews: true,
-            can_react_to_messages: true
-        });
-
-        // Редактируем сообщение капчи
-        if (messageId) {
-            try {
-                const settings = getChatSettings(chatId);
-                let newText = settings.welcomeMessageText || 'Добро пожаловать в чат, ?name!';
-                
-                // Получаем имя пользователя
-                let userName = 'Пользователь';
-                try {
-                    const member = await bot.getChatMember(chatId, targetUserId);
-                    userName = member.user.first_name || 'Пользователь';
-                } catch (e) {}
-                
-                const mention = `<a href="tg://user?id=${targetUserId}">${userName}</a>`;
-                newText = newText.replace(/\?name/g, mention);
-                newText += '\n\nПроверка пройдена администратором!';
-
-                await bot.editMessageText(newText, {
-                    chat_id: chatId,
-                    message_id: messageId,
-                    parse_mode: 'HTML',
-                    reply_markup: { inline_keyboard: [] }
-                });
-            } catch (e) {
-                console.error('Error editing captcha message:', e);
-                await bot.sendMessage(chatId, `Администратор пропустил пользователя.`);
-            }
-        }
-
-        // Удаляем из состояния капчи
-        delete captchaStates[chatId][targetUserId];
-        if (Object.keys(captchaStates[chatId]).length === 0) {
-            delete captchaStates[chatId];
-        }
-
-        const sent = await bot.sendMessage(chatId, `Я пропустила пользователя! Капча пройдена.`, {
-            reply_to_message_id: msg.message_id
-        });
-        await deleteCommandAndResponse(chatId, msg.message_id, sent.message_id);
-
-    } catch (e) {
-        console.error('Skipcaptcha error:', e);
-        bot.sendMessage(chatId, 'Простите, я не смогла пропустить пользователя. Я правда пыталась, но что-то пошло не так((', {
-            reply_to_message_id: msg.message_id
-        });
-        return bot.sendSticker(chatId, 'CAACAgIAAxkBAAEW4xFp3TsFwtS0nT6OivaNRZQ8OmArcwACJVcAAtkTIUlsu94nV6R8wDsE', { reply_to_message_id: msg.message_id })
-    }
-});
