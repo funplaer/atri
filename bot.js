@@ -4630,3 +4630,119 @@ if (settings.captchaEnabled) {
     }
 }
 });
+
+bot.onText(/^\/skipcaptcha(?:\s+(.+))?/, async (msg, match) => {
+    const chatId = msg.chat.id;
+    const userId = msg.from.id;
+
+    if (msg.chat.type === 'private' || msg.chat.type === 'channel') {
+        return bot.sendMessage(chatId, 'Я могу сделать это только в группе');
+    }
+
+    try {
+        // Проверяем, является ли пользователь админом
+        const admins = await bot.getChatAdministrators(chatId);
+        const isAdmin = admins.some(a => a.user.id === userId);
+
+        if (!isAdmin) {
+            const sent = await bot.sendMessage(chatId, 'Похоже вы не обладаете правами администратора в этой группе', {
+                reply_to_message_id: msg.message_id
+            });
+            return await deleteCommandAndResponse(chatId, msg.message_id, sent.message_id);
+        }
+
+        let targetUserId = null;
+
+        // Проверяем, есть ли ответ на сообщение
+        if (msg.reply_to_message) {
+            targetUserId = msg.reply_to_message.from.id;
+        } else {
+            // Проверяем аргументы команды
+            let args = (match[1] || '').trim().split(/\s+/).filter(Boolean);
+            if (args.length) {
+                const entityMention = getUserFromEntities(msg);
+                let input = entityMention || args[0];
+
+                const res = await ResolveUser(bot, chatId, input);
+                if (res.ok) {
+                    targetUserId = res.id;
+                }
+            }
+        }
+
+        if (!targetUserId) {
+            const sent = await bot.sendMessage(chatId, 'Укажите пользователя (ответом на сообщение или через ID)', {
+                reply_to_message_id: msg.message_id
+            });
+            return await deleteCommandAndResponse(chatId, msg.message_id, sent.message_id);
+        }
+
+        // Проверяем, есть ли капча для этого пользователя
+        if (!captchaStates[chatId] || !captchaStates[chatId][targetUserId]) {
+            const sent = await bot.sendMessage(chatId, 'Этот пользователь не проходит капчу или уже прошёл её.', {
+                reply_to_message_id: msg.message_id
+            });
+            return await deleteCommandAndResponse(chatId, msg.message_id, sent.message_id);
+        }
+
+        const captchaData = captchaStates[chatId][targetUserId];
+        const messageId = captchaData.messageId;
+
+        // Разрешаем пользователю писать в чат
+        await bot.restrictChatMember(chatId, targetUserId, {
+            can_send_messages: true,
+            can_send_media_messages: true,
+            can_send_polls: true,
+            can_send_other_messages: true,
+            can_add_web_page_previews: true,
+            can_react_to_messages: true
+        });
+
+        // Редактируем сообщение капчи
+        if (messageId) {
+            try {
+                const settings = getChatSettings(chatId);
+                let newText = settings.welcomeMessageText || 'Добро пожаловать в чат, ?name!';
+                
+                // Получаем имя пользователя
+                let userName = 'Пользователь';
+                try {
+                    const member = await bot.getChatMember(chatId, targetUserId);
+                    userName = member.user.first_name || 'Пользователь';
+                } catch (e) {}
+                
+                const mention = `<a href="tg://user?id=${targetUserId}">${userName}</a>`;
+                newText = newText.replace(/\?name/g, mention);
+                newText += '\n\nПроверка пройдена администратором!';
+
+                await bot.editMessageText(newText, {
+                    chat_id: chatId,
+                    message_id: messageId,
+                    parse_mode: 'HTML',
+                    reply_markup: { inline_keyboard: [] }
+                });
+            } catch (e) {
+                console.error('Error editing captcha message:', e);
+                await bot.sendMessage(chatId, `Администратор пропустил пользователя.`);
+            }
+        }
+
+        // Удаляем из состояния капчи
+        delete captchaStates[chatId][targetUserId];
+        if (Object.keys(captchaStates[chatId]).length === 0) {
+            delete captchaStates[chatId];
+        }
+
+        const sent = await bot.sendMessage(chatId, `Я пропустила пользователя! Капча пройдена.`, {
+            reply_to_message_id: msg.message_id
+        });
+        await deleteCommandAndResponse(chatId, msg.message_id, sent.message_id);
+
+    } catch (e) {
+        console.error('Skipcaptcha error:', e);
+        bot.sendMessage(chatId, 'Простите, я не смогла пропустить пользователя. Я правда пыталась, но что-то пошло не так((', {
+            reply_to_message_id: msg.message_id
+        });
+        return bot.sendSticker(chatId, 'CAACAgIAAxkBAAEW4xFp3TsFwtS0nT6OivaNRZQ8OmArcwACJVcAAtkTIUlsu94nV6R8wDsE', { reply_to_message_id: msg.message_id })
+    }
+});
