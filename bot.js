@@ -113,6 +113,124 @@ const SETTINGS_NAMES = {
     }
 };
 
+
+async function handleCaptchaVerification(chatId, userId, messageId) {
+    try {
+        // Разрешаем пользователю писать в чат
+        await bot.restrictChatMember(chatId, userId, {
+            can_send_messages: true,
+            can_send_media_messages: true,
+            can_send_polls: true,
+            can_send_other_messages: true,
+            can_add_web_page_previews: true,
+            can_react_to_messages: true
+        });
+
+        // Удаляем кнопку из сообщения
+        const keyboard = {
+            inline_keyboard: []
+        };
+        
+        try {
+            await bot.editMessageReplyMarkup(
+                { 
+                    chat_id: chatId, 
+                    message_id: messageId 
+                },
+                { reply_markup: keyboard }
+            );
+        } catch (e) {
+            
+            await bot.sendMessage(chatId, 'Вы успешно прошли проверку!', {
+                reply_to_message_id: messageId
+            });
+        }
+
+        // Удаляем из состояния капчи
+        if (captchaStates[chatId]) {
+            delete captchaStates[chatId][userId];
+            if (Object.keys(captchaStates[chatId]).length === 0) {
+                delete captchaStates[chatId];
+            }
+        }
+
+    } catch (e) {
+        console.error('Captcha verification error:', e);
+    }
+}
+
+function generateMathProblem() {
+    const operations = ['+', '-', '*', '/'];
+    const operation = operations[Math.floor(Math.random() * operations.length)];
+    
+    let a, b, correctAnswer, question;
+    
+    switch(operation) {
+        case '+':
+            a = Math.floor(Math.random() * 20) + 1;
+            b = Math.floor(Math.random() * 20) + 1;
+            correctAnswer = a + b;
+            question = `${a} + ${b} = ?`;
+            break;
+        case '-':
+            a = Math.floor(Math.random() * 20) + 1;
+            b = Math.floor(Math.random() * a) + 1; // чтобы результат был положительным
+            correctAnswer = a - b;
+            question = `${a} - ${b} = ?`;
+            break;
+        case '*':
+            a = Math.floor(Math.random() * 10) + 1;
+            b = Math.floor(Math.random() * 10) + 1;
+            correctAnswer = a * b;
+            question = `${a} × ${b} = ?`;
+            break;
+        case '/':
+            b = Math.floor(Math.random() * 10) + 1;
+            correctAnswer = Math.floor(Math.random() * 10) + 1;
+            a = b * correctAnswer; // чтобы делилось нацело
+            question = `${a} ÷ ${b} = ?`;
+            break;
+    }
+    
+    // Генерируем варианты ответов (4 варианта, один правильный)
+    const options = new Set();
+    options.add(correctAnswer);
+    
+    // Добавляем случайные неправильные ответы
+    let attempts = 0;
+    while (options.size < 4 && attempts < 100) {
+        let wrongAnswer;
+        const offset = Math.floor(Math.random() * 10) + 1;
+        if (Math.random() > 0.5) {
+            wrongAnswer = correctAnswer + offset;
+        } else {
+            wrongAnswer = Math.max(0, correctAnswer - offset);
+        }
+        if (wrongAnswer !== correctAnswer && wrongAnswer >= 0) {
+            options.add(wrongAnswer);
+        }
+        attempts++;
+    }
+    
+    // Если не набрали 4 варианта, добавляем недостающие
+    let fallback = 0;
+    while (options.size < 4) {
+        if (!options.has(fallback) && fallback !== correctAnswer) {
+            options.add(fallback);
+        }
+        fallback++;
+    }
+    
+    // Перемешиваем варианты
+    const shuffledOptions = Array.from(options).sort(() => Math.random() - 0.5);
+    
+    return {
+        question: question,
+        correctAnswer: correctAnswer,
+        options: shuffledOptions
+    };
+}
+
 const SETTINGS_PAGE_SIZE = 6;
 function getSettingsKeys() {
     return Object.keys(SETTINGS_NAMES);
@@ -3277,6 +3395,185 @@ bot.on('callback_query', async (query) => {
     const userId = query.from.id;
     const data = query.data;
     const messageId = query.message.message_id;
+    const settings = getChatSettings(chatId);
+    
+
+    if (data.startsWith('captcha_')) {
+        const parts = data.split('_');
+        const targetUserId = parseInt(parts[1]);
+        const action = parts[2] || 'verify';
+        const selectedAnswer = parts[2] ? parseInt(parts[2]) : null;
+        
+        if (query.from.id !== targetUserId) {
+            return bot.answerCallbackQuery(query.id, { 
+                text: 'Эта кнопка не для вас!', 
+                show_alert: true 
+            });
+        }
+
+        if (!captchaStates[chatId] || !captchaStates[chatId][targetUserId]) {
+            return bot.answerCallbackQuery(query.id, { 
+                text: 'Вы уже прошли проверку или она неактивна.', 
+                show_alert: true 
+            });
+        }
+
+        const captchaData = captchaStates[chatId][targetUserId];
+        if (Date.now() - captchaData.sentAt > 5 * 60 * 1000) {
+            delete captchaStates[chatId][targetUserId];
+            return bot.answerCallbackQuery(query.id, { 
+                text: 'Время проверки истекло. Попробуйте выйти и зайти заново.', 
+                show_alert: true 
+            });
+        }
+
+        // Если это ответ на математический пример
+        if (action !== 'verify' && captchaData.type === 'hard') {
+            const isCorrect = (selectedAnswer === captchaData.correctAnswer);
+            
+            if (isCorrect) {
+                // Правильный ответ - пропускаем
+                try {
+                    await bot.restrictChatMember(chatId, targetUserId, {
+                        can_send_messages: true,
+                        can_send_media_messages: true,
+                        can_send_polls: true,
+                        can_send_other_messages: true,
+                        can_add_web_page_previews: true,
+                        can_react_to_messages: true
+                    });
+
+                    const messageId = captchaData.messageId;
+                    if (messageId) {
+                        try {
+                            let newText = settings.welcomeMessageText || 'Добро пожаловать в чат, ?name!';
+                            const mention = `<a href="tg://user?id=${targetUserId}">${query.from.first_name}</a>`;
+                            newText = newText.replace(/\?name/g, mention);
+                            newText += '\n\nПроверка пройдена!';
+
+                            await bot.editMessageText(newText, {
+                                chat_id: chatId,
+                                message_id: messageId,
+                                parse_mode: 'HTML',
+                                reply_markup: { inline_keyboard: [] }
+                            });
+                        } catch (e) {
+                            console.error('Error editing captcha message:', e);
+                            await bot.sendMessage(chatId, `${query.from.first_name}, вы успешно прошли проверку`);
+                        }
+                    }
+
+                    delete captchaStates[chatId][targetUserId];
+                    if (Object.keys(captchaStates[chatId]).length === 0) {
+                        delete captchaStates[chatId];
+                    }
+
+                    await bot.answerCallbackQuery(query.id, { 
+                        text: 'Проверка пройдена! Теперь вы можете писать в чат!' 
+                    });
+
+                } catch (e) {
+                    console.error('Captcha verification error:', e);
+                    await bot.answerCallbackQuery(query.id, { 
+                        text: 'Ошибка при проверке. Напишите /help мне в лс и опишите ситуацию.', 
+                        show_alert: true 
+                    });
+                }
+                return;
+            } else {
+                // Неправильный ответ - генерируем новый пример
+                const newProblem = generateMathProblem();
+                captchaData.correctAnswer = newProblem.correctAnswer;
+                captchaData.sentAt = Date.now(); // Сбрасываем таймер
+                
+                // Создаем новые кнопки
+                const keyboard = {
+                    inline_keyboard: newProblem.options.map(opt => [
+                        { text: String(opt), callback_data: `captcha_${targetUserId}_${opt}` }
+                    ])
+                };
+
+                try {
+                    const settings = getChatSettings(chatId);
+                    let welcomeText = settings.welcomeMessageText || 'Добро пожаловать в чат, ?name!';
+                    const mention = `<a href="tg://user?id=${targetUserId}">${query.from.first_name}</a>`;
+                    welcomeText = welcomeText.replace(/\?name/g, mention);
+                    welcomeText += `\n\nРешите пример: ${newProblem.question}\n\n Неправильно! Попробуйте снова:`;
+
+                    await bot.editMessageText(welcomeText, {
+                        chat_id: chatId,
+                        message_id: captchaData.messageId,
+                        parse_mode: 'HTML',
+                        reply_markup: keyboard
+                    });
+
+                    await bot.answerCallbackQuery(query.id, { 
+                        text: 'Неправильно! Попробуйте ещё раз.', 
+                        show_alert: true 
+                    });
+                } catch (e) {
+                    console.error('Error updating captcha problem:', e);
+                    await bot.answerCallbackQuery(query.id, { 
+                        text: 'Ошибка при обновлении примера. Напишите мне /help в лс и опишите ситуацию.', 
+                        show_alert: true 
+                    });
+                }
+                return;
+            }
+        }
+
+        // Простая капча (кнопка)
+        if (captchaData.type === 'simple' || !captchaData.type) {
+            try {
+                await bot.restrictChatMember(chatId, targetUserId, {
+                    can_send_messages: true,
+                    can_send_media_messages: true,
+                    can_send_polls: true,
+                    can_send_other_messages: true,
+                    can_add_web_page_previews: true,
+                    can_react_to_messages: true
+                });
+                
+                const messageId = captchaData.messageId;
+                if (messageId) {
+                    try {
+                        let newText = settings.welcomeMessageText || 'Добро пожаловать в чат, ?name!';
+                        const mention = `<a href="tg://user?id=${targetUserId}">${query.from.first_name}</a>`;
+                        newText = newText.replace(/\?name/g, mention);
+                        newText += '\n\nПроверка пройдена!';
+
+                        await bot.editMessageText(newText, {
+                            chat_id: chatId,
+                            message_id: messageId,
+                            parse_mode: 'HTML',
+                            reply_markup: { inline_keyboard: [] }
+                        });
+                    } catch (e) {
+                        console.error('Error editing captcha message:', e);
+                        await bot.sendMessage(chatId, `${query.from.first_name}, вы успешно прошли проверку!`);
+                    }
+                }
+
+                delete captchaStates[chatId][targetUserId];
+                if (Object.keys(captchaStates[chatId]).length === 0) {
+                    delete captchaStates[chatId];
+                }
+
+                await bot.answerCallbackQuery(query.id, { 
+                    text: 'Проверка пройдена! Теперь вы можете писать в чат!' 
+                });
+
+            } catch (e) {
+                console.error('Captcha verification error:', e);
+                await bot.answerCallbackQuery(query.id, { 
+                    text: 'Ошибка при проверке. Напишите мне /help в лс и опишите проблему.', 
+                    show_alert: true 
+                });
+            }
+            return;
+        }
+        return;
+    }
 
     if (data.startsWith('settings_')) {
         try {
@@ -4180,81 +4477,156 @@ bot.on('new_chat_members', async (msg) => {
 
     // === АНТИРЕЙД ===
     try {
-        const settings = getChatSettings(chatId);
-        
         if (!settings.autoRaidMode) {
-            return;
-        }
+            // Если антирейд выключен, всё равно продолжаем
+        } else {
+            const sensitivityMap = {
+                1: 5,   
+                2: 7,   
+                3: 10,  
+                4: 15,  
+                5: 25   
+            };
+            
+            const raidThreshold = sensitivityMap[settings.raidSensitivity] || 10;
 
-        const sensitivityMap = {
-            1: 5,   
-            2: 7,   
-            3: 10,  
-            4: 15,  
-            5: 25   
-        };
-        
-        const raidThreshold = sensitivityMap[settings.raidSensitivity] || 10;
-
-        if (!joinTracker[chatId]) {
-            joinTracker[chatId] = [];
-        }
-
-        const now = Date.now();
-
-        for (const user of msg.new_chat_members) {
-            joinTracker[chatId].push({
-                id: user.id,
-                time: now
-            });
-        }
-
-        joinTracker[chatId] = joinTracker[chatId].filter(
-            entry => now - entry.time <= 15000
-        );
-
-        if (joinTracker[chatId].length >= raidThreshold) {
-            const raidUsers = [...joinTracker[chatId]];
-
-            await enableRaidMode(chatId);
-
-            const admins = await bot.getChatAdministrators(chatId);
-
-            for (const entry of raidUsers) {
-                const isAdmin = admins.some(a => a.user.id === entry.id);
-                if (!isAdmin) {
-                    try {
-                        await bot.banChatMember(chatId, entry.id);
-                        await bot.unbanChatMember(chatId, entry.id);
-                    } catch {}
-                }
+            if (!joinTracker[chatId]) {
+                joinTracker[chatId] = [];
             }
 
-            joinTracker[chatId] = [];
-        }
+            const now = Date.now();
 
+            for (const user of validUsers) {
+                joinTracker[chatId].push({
+                    id: user.id,
+                    time: now
+                });
+            }
+
+            joinTracker[chatId] = joinTracker[chatId].filter(
+                entry => now - entry.time <= 15000
+            );
+
+            if (joinTracker[chatId].length >= raidThreshold) {
+                const raidUsers = [...joinTracker[chatId]];
+
+                await enableRaidMode(chatId);
+
+                const admins = await bot.getChatAdministrators(chatId);
+
+                for (const entry of raidUsers) {
+                    const isAdmin = admins.some(a => a.user.id === entry.id);
+                    if (!isAdmin) {
+                        try {
+                            await bot.banChatMember(chatId, entry.id);
+                            await bot.unbanChatMember(chatId, entry.id);
+                        } catch {}
+                    }
+                }
+
+                joinTracker[chatId] = [];
+            }
+        }
     } catch (e) {
         console.error('Raid detector error:', e);
     }
-    
 
-    // === ПРИВЕТСТВЕННОЕ СООБЩЕНИЕ ===
-    if (settings.welcomeMessageEnabled) {
-        for (const user of validUsers) {
-            try {
-                let welcomeText = settings.welcomeMessageText || 'Добро пожаловать в чат, ?name!';
-                
-                // Заменяем ?name на упоминание пользователя
-                const mention = `<a href="tg://user?id=${user.id}">${user.first_name}</a>`;
-                welcomeText = welcomeText.replace(/\?name/g, mention);
-                
-                await bot.sendMessage(chatId, welcomeText, {
-                    parse_mode: 'HTML',
-                    reply_to_message_id: msg.message_id
-                });
-            } catch (e) {
-                console.error('Ошибка отправки приветствия:', e);
+    // === КАПЧА И ПРИВЕТСТВЕННОЕ СООБЩЕНИЕ ===
+if (settings.captchaEnabled) {
+    // Если капча включена, автоматически включаем приветственное сообщение
+    for (const user of validUsers) {
+        try {
+            // Ограничиваем пользователя - запрещаем писать
+            await bot.restrictChatMember(chatId, user.id, {
+                permissions: {
+                    can_send_messages: false,
+                    can_send_media_messages: false,
+                    can_send_polls: false,
+                    can_send_other_messages: false,
+                    can_add_web_page_previews: false,
+                    can_react_to_messages: false
+                }
+            });
+
+            // Сохраняем состояние капчи для пользователя
+            if (!captchaStates[chatId]) {
+                captchaStates[chatId] = {};
             }
+            
+            // Определяем тип капчи
+            const captchaType = settings.captchaType || 'simple';
+            
+            // Формируем текст приветствия с капчей
+            let welcomeText = settings.welcomeMessageText || 'Добро пожаловать в чат, ?name!';
+            const mention = `<a href="tg://user?id=${user.id}">${user.first_name}</a>`;
+            welcomeText = welcomeText.replace(/\?name/g, mention);
+            
+            let keyboard;
+            let captchaData = {
+                messageId: null,
+                sentAt: Date.now(),
+                type: captchaType
+            };
+            
+            if (captchaType === 'hard') {
+                // Математическая капча
+                const problem = generateMathProblem();
+                captchaData.correctAnswer = problem.correctAnswer;
+                
+                welcomeText += `\n\nРешите пример: ${problem.question}`;
+                
+                keyboard = {
+                    inline_keyboard: problem.options.map(opt => [
+                        { text: String(opt), callback_data: `captcha_${user.id}_${opt}` }
+                    ])
+                };
+            } else {
+                // Простая капча - кнопка
+                welcomeText += '\n\nДля того, чтобы писать в чат, нажмите на кнопку ниже.';
+                
+                keyboard = {
+                    inline_keyboard: [
+                        [{ 
+                            text: 'Я человек!', 
+                            callback_data: `captcha_${user.id}_verify`
+                        }]
+                    ]
+                };
+            }
+            
+            captchaStates[chatId][user.id] = captchaData;
+
+            // Отправляем сообщение с кнопкой
+            const sentMsg = await bot.sendMessage(chatId, welcomeText, {
+                parse_mode: 'HTML',
+                reply_to_message_id: msg.message_id,
+                reply_markup: keyboard
+            });
+
+            // Сохраняем ID сообщения для последующего редактирования
+            if (captchaStates[chatId] && captchaStates[chatId][user.id]) {
+                captchaStates[chatId][user.id].messageId = sentMsg.message_id;
+            }
+
+        } catch (e) {
+            console.error('Ошибка отправки капчи:', e);
         }
     }
+} else if (settings.welcomeMessageEnabled) {
+    // Если капча выключена, но приветствие включено - отправляем обычное приветствие
+    for (const user of validUsers) {
+        try {
+            let welcomeText = settings.welcomeMessageText || 'Добро пожаловать в чат, ?name!';
+            const mention = `<a href="tg://user?id=${user.id}">${user.first_name}</a>`;
+            welcomeText = welcomeText.replace(/\?name/g, mention);
+            
+            await bot.sendMessage(chatId, welcomeText, {
+                parse_mode: 'HTML',
+                reply_to_message_id: msg.message_id
+            });
+        } catch (e) {
+            console.error('Ошибка отправки приветствия:', e);
+        }
+    }
+}
 });
