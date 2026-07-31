@@ -110,13 +110,16 @@ const SETTINGS_NAMES = {
     captchaType: {
         name: 'Тип капчи',
         description: 'Тип капчи: "simple" (простая) — нужно нажать на кнопку, "hard" (сильная) — нужно решить математический пример'
+    },
+    captchaKickEnabled: {
+        name: 'Автоисключение при непрохождении капчи',
+        description: 'Если пользователь не проходит капчу за 5 минут, он будет исключён из чата (бан и сразу разбан)'
     }
 };
 
 
 async function handleCaptchaVerification(chatId, userId, messageId) {
     try {
-        // Разрешаем пользователю писать в чат
         await bot.restrictChatMember(chatId, userId, {
             can_send_messages: true,
             can_send_media_messages: true,
@@ -126,7 +129,6 @@ async function handleCaptchaVerification(chatId, userId, messageId) {
             can_react_to_messages: true
         });
 
-        // Удаляем кнопку из сообщения
         const keyboard = {
             inline_keyboard: []
         };
@@ -146,7 +148,6 @@ async function handleCaptchaVerification(chatId, userId, messageId) {
             });
         }
 
-        // Удаляем из состояния капчи
         if (captchaStates[chatId]) {
             delete captchaStates[chatId][userId];
             if (Object.keys(captchaStates[chatId]).length === 0) {
@@ -174,7 +175,7 @@ function generateMathProblem() {
             break;
         case '-':
             a = Math.floor(Math.random() * 20) + 1;
-            b = Math.floor(Math.random() * a) + 1; // чтобы результат был положительным
+            b = Math.floor(Math.random() * a) + 1;
             correctAnswer = a - b;
             question = `${a} - ${b} = ?`;
             break;
@@ -187,16 +188,16 @@ function generateMathProblem() {
         case '/':
             b = Math.floor(Math.random() * 10) + 1;
             correctAnswer = Math.floor(Math.random() * 10) + 1;
-            a = b * correctAnswer; // чтобы делилось нацело
+            a = b * correctAnswer; 
             question = `${a} ÷ ${b} = ?`;
             break;
     }
     
-    // Генерируем варианты ответов (4 варианта, один правильный)
+    
     const options = new Set();
     options.add(correctAnswer);
     
-    // Добавляем случайные неправильные ответы
+    
     let attempts = 0;
     while (options.size < 4 && attempts < 100) {
         let wrongAnswer;
@@ -212,7 +213,7 @@ function generateMathProblem() {
         attempts++;
     }
     
-    // Если не набрали 4 варианта, добавляем недостающие
+    
     let fallback = 0;
     while (options.size < 4) {
         if (!options.has(fallback) && fallback !== correctAnswer) {
@@ -221,7 +222,7 @@ function generateMathProblem() {
         fallback++;
     }
     
-    // Перемешиваем варианты
+    
     const shuffledOptions = Array.from(options).sort(() => Math.random() - 0.5);
     
     return {
@@ -230,6 +231,77 @@ function generateMathProblem() {
         options: shuffledOptions
     };
 }
+
+setInterval(async () => {
+    try {
+        const now = Date.now();
+        const timeoutMinutes = 5;
+        const timeoutMs = timeoutMinutes * 60 * 1000;
+
+        for (const chatId of Object.keys(captchaStates)) {
+            const chatData = captchaStates[chatId];
+            if (!chatData) continue;
+
+            let settings;
+            try {
+                settings = getChatSettings(chatId);
+            } catch (e) {
+                continue;
+            }
+
+            if (!settings.captchaKickEnabled) {
+                continue;
+            }
+
+            for (const userId of Object.keys(chatData)) {
+                const userData = chatData[userId];
+                if (!userData) continue;
+
+                if (now - userData.sentAt > timeoutMs) {
+                    try {
+                        await bot.banChatMember(parseInt(chatId), parseInt(userId));
+                        await bot.unbanChatMember(parseInt(chatId), parseInt(userId));
+
+                        if (userData.messageId) {
+                            try {
+                                const member = await bot.getChatMember(parseInt(chatId), parseInt(userId));
+                                let newText = settings.welcomeMessageText || 'Добро пожаловать в чат, ?name!';
+                                const mention = `<a href="tg://user?id=${userId}">${member.user.first_name}</a>`;
+                                newText = newText.replace(/\?name/g, mention);
+                                newText += '\n\nВремя проверки истекло. Пользователь исключён из чата.';
+
+                                await bot.editMessageText(newText, {
+                                    chat_id: parseInt(chatId),
+                                    message_id: userData.messageId,
+                                    parse_mode: 'HTML',
+                                    reply_markup: { inline_keyboard: [] }
+                                });
+                            } catch (e) {
+                                console.error('Error editing captcha message on kick:', e);
+                            }
+                        }
+                        
+
+                        
+                        delete chatData[userId];
+
+
+                    } catch (e) {
+                        console.error(`Error kicking user ${userId} from chat ${chatId}:`, e);
+                        
+                        delete chatData[userId];
+                    }
+                }
+            }
+
+            if (Object.keys(chatData).length === 0) {
+                delete captchaStates[chatId];
+            }
+        }
+    } catch (e) {
+        console.error('Captcha timeout checker error:', e);
+    }
+}, 30 * 1000); 
 
 const SETTINGS_PAGE_SIZE = 6;
 function getSettingsKeys() {
@@ -286,7 +358,8 @@ const defaultSettings = {
     welcomeMessageEnabled: false,
     welcomeMessageText: 'Добро пожаловать в чат, ?name!',
     captchaEnabled: false,
-    captchaType: 'simple'
+    captchaType: 'simple',
+    captchaKickEnabled: false
 };
 const pendingDeletions = new Map(); 
 
@@ -3639,12 +3712,11 @@ bot.on('callback_query', async (query) => {
             });
         }
 
-        // Если это ответ на математический пример
         if (action !== 'verify' && captchaData.type === 'hard') {
             const isCorrect = (selectedAnswer === captchaData.correctAnswer);
             
             if (isCorrect) {
-                // Правильный ответ - пропускаем
+                
                 try {
                     await bot.restrictChatMember(chatId, targetUserId, {
                         can_send_messages: true,
@@ -3693,12 +3765,12 @@ bot.on('callback_query', async (query) => {
                 }
                 return;
             } else {
-                // Неправильный ответ - генерируем новый пример
+                
                 const newProblem = generateMathProblem();
                 captchaData.correctAnswer = newProblem.correctAnswer;
-                captchaData.sentAt = Date.now(); // Сбрасываем таймер
+                captchaData.sentAt = Date.now(); 
                 
-                // Создаем новые кнопки
+                
                 const keyboard = {
                     inline_keyboard: newProblem.options.map(opt => [
                         { text: String(opt), callback_data: `captcha_${targetUserId}_${opt}` }
@@ -3734,7 +3806,7 @@ bot.on('callback_query', async (query) => {
             }
         }
 
-        // Простая капча (кнопка)
+        
         if (captchaData.type === 'simple' || !captchaData.type) {
             try {
                 await bot.restrictChatMember(chatId, targetUserId, {
@@ -3826,11 +3898,11 @@ bot.on('callback_query', async (query) => {
                 if (!settingsInputStates[chatId]) {
                     settingsInputStates[chatId] = {};
                 }
-                // Используем сохранённую страницу, если есть
+                
                 const returnPage = settingsInputStates[chatId].returnPage || 0;
-                // Очищаем сохранённую страницу после использования
+                
                 delete settingsInputStates[chatId].returnPage;
-                // Обновляем текущую страницу
+                
                 settingsInputStates[chatId].currentPage = returnPage;
                 await showSettingsMenu(chatId, messageId, returnPage);
                 return;
@@ -3842,7 +3914,7 @@ bot.on('callback_query', async (query) => {
                     settingsInputStates[chatId] = {};
                 }
                 settingsInputStates[chatId].currentPage = page;
-                // Если мы на странице настроек, очищаем сохранённую страницу возврата
+                
                 delete settingsInputStates[chatId].returnPage;
                 await showSettingsMenu(chatId, messageId, page);
                 return;
@@ -4210,7 +4282,7 @@ bot.on('message', async (msg) => {
                 return bot.sendMessage(chatId, 'Пожалуйста, введите корректное число.');
             }
             if (key === 'raidSensitivity') {
-                if (parsedValue < 0 || parsedValue > 5 || !Number.isInteger(parsedValue)) {
+                if (parsedValue < 1 || parsedValue > 5 || !Number.isInteger(parsedValue)) {
                     return bot.sendMessage(chatId, 'Пожалуйста, введите целое число от 1 до 5.');
                 }
             }
