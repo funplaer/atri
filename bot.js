@@ -24,6 +24,7 @@ const reportStates = {};
 const settingsInputStates = {};
 const settingsState = {};
 const captchaStates = {};
+const autoMessageState = {};
 //настройки
 
 const SETTINGS_NAMES = {
@@ -114,6 +115,18 @@ const SETTINGS_NAMES = {
     captchaKickEnabled: {
         name: 'Автоисключение при непрохождении капчи',
         description: 'Если пользователь не проходит капчу за 5 минут, он будет исключён из чата (бан и сразу разбан)'
+    },
+        autoMessageEnabled: {
+        name: 'Авто-сообщения',
+        description: 'Включить автоматическую отправку сообщений в чат'
+    },
+    autoMessageInterval: {
+        name: 'Период авто-сообщений',
+        description: 'Как часто отправлять сообщения (m - минуты, h - часы, d - дни, M - месяцы). Например: 1h, 30m, 2d'
+    },
+    autoMessageText: {
+        name: 'Текст авто-сообщений',
+        description: 'Текст сообщений для автоматической отправки. Можно указать несколько сообщений, разделяя их строкой ~*~ (до 6 штук, каждое до 700 символов). При нескольких сообщениях они будут отправляться по очереди с каждым интервалом.'
     }
 };
 
@@ -359,7 +372,10 @@ const defaultSettings = {
     welcomeMessageText: 'Добро пожаловать в чат, ?name!',
     captchaEnabled: false,
     captchaType: 'simple',
-    captchaKickEnabled: false
+    captchaKickEnabled: false,
+    autoMessageEnabled: false,
+    autoMessageInterval: '1h',
+    autoMessageText: 'Это автоматическое сообщение от бота!'
 };
 const pendingDeletions = new Map(); 
 
@@ -4685,3 +4701,92 @@ bot.onText(/\/onlinepanel/, (msg) => handleOnlinePanel(bot, msg));
 bot.onText(/\/updatesecretcode/, (msg) => handleUpdateSecretCode(bot, msg));
 bot.onText(/\/updateonlineadmins/, (msg) => handleUpdateOnlineAdmins(bot, msg));
 
+
+async function processAutoMessages() {
+    try {
+        
+        const settingsFiles = fs.readdirSync(SETTINGS_DIR);
+        
+        for (const file of settingsFiles) {
+            if (!file.endsWith('_settings.json')) continue;
+            
+            const chatId = file.replace('_settings.json', '');
+            
+            
+            if (!/^-?\d+$/.test(chatId)) continue;
+            
+            const settings = getChatSettings(chatId);
+            
+            
+            if (!settings.autoMessageEnabled) {
+                
+                if (autoMessageState[chatId]) {
+                    clearTimeout(autoMessageState[chatId].timer);
+                    delete autoMessageState[chatId];
+                }
+                continue;
+            }
+            
+            if (!settings.autoMessageText || settings.autoMessageText.trim() === '') {
+                continue;
+            }
+            
+            const interval = ParseDuration(settings.autoMessageInterval);
+            if (!interval || interval <= 0) {
+                continue;
+            }
+            
+            const messages = settings.autoMessageText
+                .split('~*~')
+                .map(msg => msg.trim())
+                .filter(msg => msg.length > 0)
+                .slice(0, 6); 
+            
+            if (messages.length === 0) {
+                continue;
+            }
+            
+            let validMessages = true;
+            for (const msg of messages) {
+                if (msg.length > 700) {
+                    validMessages = false;
+                    break;
+                }
+            }
+            if (!validMessages) {
+                continue;
+            }
+            
+            if (!autoMessageState[chatId]) {
+                autoMessageState[chatId] = {
+                    currentIndex: 0,
+                    timer: null,
+                    lastSent: Date.now()
+                };
+            }
+            
+            const state = autoMessageState[chatId];
+            
+            const now = Date.now();
+            const timeSinceLastSend = (now - state.lastSent) / 1000;
+            
+            if (timeSinceLastSend >= interval) {
+                try {
+                    const currentMessage = messages[state.currentIndex];
+                    await bot.sendMessage(parseInt(chatId), currentMessage);
+                    
+                    state.lastSent = now;
+                    state.currentIndex = (state.currentIndex + 1) % messages.length;
+                    
+                    
+                } catch (e) {
+                    console.error(`Error sending auto-message to chat ${chatId}:`, e);
+                }
+            }
+        }
+    } catch (e) {
+        console.error('Process auto-messages error:', e);
+    }
+}
+
+setInterval(processAutoMessages, 30 * 1000);
