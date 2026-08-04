@@ -10,6 +10,8 @@ const bot = new TelegramBot(token, { polling: true });
 
 const CHAT_LOG_DIR = path.join(__dirname, 'chat_logs');
 const USER_LOG_DIR = path.join(__dirname, 'user_logs');
+const CANCEL_FILE = '/root/atri/punishmentsToCancel.json';
+const processedCancellations = new Set();
 
 if (!fs.existsSync(CHAT_LOG_DIR)) fs.mkdirSync(CHAT_LOG_DIR);
 if (!fs.existsSync(USER_LOG_DIR)) fs.mkdirSync(USER_LOG_DIR);
@@ -3691,6 +3693,270 @@ async function checkWarnPunishment(chatId, targetId) {
         console.error('WARN AUTO PUNISH ERROR:', e);
     }
 }
+
+// bot.js — добавьте после функции checkWarnPunishment
+
+// === ОБРАБОТКА ОТМЕНЫ НАКАЗАНИЙ ИЗ ПАНЕЛИ ===
+async function processCancellations() {
+    try {
+        if (!fs.existsSync(CANCEL_FILE)) {
+            return;
+        }
+
+        const raw = fs.readFileSync(CANCEL_FILE, 'utf8');
+        const cancelData = JSON.parse(raw);
+        
+        if (!cancelData.pending || cancelData.pending.length === 0) {
+            return;
+        }
+
+        let modified = false;
+        const remaining = [];
+
+        for (const item of cancelData.pending) {
+            const key = `${item.chatId}_${item.userId}_${item.punishmentType}_${item.index}`;
+            
+            // Пропускаем уже обработанные
+            if (processedCancellations.has(key)) {
+                continue;
+            }
+
+            try {
+                const chatId = parseInt(item.chatId);
+                const userId = parseInt(item.userId);
+                const adminId = item.adminId ? parseInt(item.adminId) : null;
+                const punishmentType = item.punishmentType;
+                const index = item.index;
+
+                let success = false;
+                let logMessage = '';
+
+                // Загружаем логи чата
+                const logFile = getChatLogFile(chatId);
+                const logs = loadLogs(chatId);
+                const user = getUser(logs, userId);
+
+                // Проверяем существование наказания
+                if (!user[punishmentType] || !user[punishmentType][index]) {
+                    logMessage = `Наказание ${punishmentType}[${index}] для пользователя ${userId} не найдено`;
+                    console.log(`[Cancel] ${logMessage}`);
+                    processedCancellations.add(key);
+                    continue;
+                }
+
+                const punishment = user[punishmentType][index];
+
+                // Проверяем, активно ли наказание
+                if (punishment.active === false) {
+                    logMessage = `Наказание ${punishmentType}[${index}] для пользователя ${userId} уже неактивно`;
+                    console.log(`[Cancel] ${logMessage}`);
+                    processedCancellations.add(key);
+                    continue;
+                }
+
+                // Отменяем наказание в зависимости от типа
+                switch (punishmentType) {
+                    case 'mutes': {
+                        // Снимаем мут через unmute
+                        try {
+                            await bot.restrictChatMember(chatId, userId, {
+                                can_send_messages: true,
+                                can_send_media_messages: true,
+                                can_send_polls: true,
+                                can_send_other_messages: true,
+                                can_add_web_page_previews: true,
+                                can_react_to_messages: true
+                            });
+
+                            punishment.active = false;
+                            punishment.removedAt = new Date().toISOString();
+                            punishment.removedBy = adminId || 'system';
+                            
+                            // Обновляем глобальные логи
+                            const ulogs = loadUserLogs(userId);
+                            const u = getUserGlobal(ulogs, userId);
+                            const globalMute = [...u.mutes].reverse().find(m => 
+                                m.chatId == chatId && 
+                                m.issuedAt === punishment.issuedAt && 
+                                m.active
+                            );
+                            if (globalMute) {
+                                globalMute.active = false;
+                                globalMute.removedAt = new Date().toISOString();
+                                globalMute.removedBy = adminId || 'system';
+                            }
+                            saveUserLogs(userId, ulogs);
+                            
+                            success = true;
+                            logMessage = `Мут для пользователя ${userId} отменён${adminId ? ` администратором ${adminId}` : ''}`;
+                        } catch (e) {
+                            logMessage = `Ошибка отмены мута для ${userId}: ${e.message}`;
+                            console.error(`[Cancel] ${logMessage}`);
+                        }
+                        break;
+                    }
+
+                    case 'bans': {
+                        // Снимаем бан через unban
+                        try {
+                            await bot.unbanChatMember(chatId, userId);
+
+                            punishment.active = false;
+                            punishment.removedAt = new Date().toISOString();
+                            punishment.removedBy = adminId || 'system';
+                            
+                            // Обновляем глобальные логи
+                            const ulogs = loadUserLogs(userId);
+                            const u = getUserGlobal(ulogs, userId);
+                            const globalBan = [...u.bans].reverse().find(b => 
+                                b.chatId == chatId && 
+                                b.issuedAt === punishment.issuedAt && 
+                                b.active
+                            );
+                            if (globalBan) {
+                                globalBan.active = false;
+                                globalBan.removedAt = new Date().toISOString();
+                                globalBan.removedBy = adminId || 'system';
+                            }
+                            saveUserLogs(userId, ulogs);
+                            
+                            success = true;
+                            logMessage = `Бан для пользователя ${userId} отменён${adminId ? ` администратором ${adminId}` : ''}`;
+                        } catch (e) {
+                            logMessage = `Ошибка отмены бана для ${userId}: ${e.message}`;
+                            console.error(`[Cancel] ${logMessage}`);
+                        }
+                        break;
+                    }
+
+                    case 'warns': {
+                        // Снимаем предупреждение
+                        try {
+                            punishment.active = false;
+                            punishment.removedAt = new Date().toISOString();
+                            punishment.removedBy = adminId || 'system';
+                            
+                            // Обновляем глобальные логи
+                            const ulogs = loadUserLogs(userId);
+                            const u = getUserGlobal(ulogs, userId);
+                            const globalWarn = [...u.warns].reverse().find(w => 
+                                w.chatId == chatId && 
+                                w.issuedAt === punishment.issuedAt && 
+                                w.active
+                            );
+                            if (globalWarn) {
+                                globalWarn.active = false;
+                                globalWarn.removedAt = new Date().toISOString();
+                                globalWarn.removedBy = adminId || 'system';
+                            }
+                            saveUserLogs(userId, ulogs);
+                            
+                            success = true;
+                            logMessage = `Предупреждение для пользователя ${userId} отменено${adminId ? ` администратором ${adminId}` : ''}`;
+                        } catch (e) {
+                            logMessage = `Ошибка отмены предупреждения для ${userId}: ${e.message}`;
+                            console.error(`[Cancel] ${logMessage}`);
+                        }
+                        break;
+                    }
+
+                    case 'notes': {
+                        // Удаляем заметку
+                        try {
+                            punishment.active = false;
+                            punishment.removedAt = new Date().toISOString();
+                            punishment.removedBy = adminId || 'system';
+                            
+                            // Обновляем глобальные логи
+                            const ulogs = loadUserLogs(userId);
+                            const u = getUserGlobal(ulogs, userId);
+                            const globalNote = [...u.notes].reverse().find(n => 
+                                n.chatId == chatId && 
+                                n.text === punishment.text && 
+                                n.active
+                            );
+                            if (globalNote) {
+                                globalNote.active = false;
+                                globalNote.removedAt = new Date().toISOString();
+                                globalNote.removedBy = adminId || 'system';
+                            }
+                            saveUserLogs(userId, ulogs);
+                            
+                            success = true;
+                            logMessage = `Заметка для пользователя ${userId} удалена${adminId ? ` администратором ${adminId}` : ''}`;
+                        } catch (e) {
+                            logMessage = `Ошибка удаления заметки для ${userId}: ${e.message}`;
+                            console.error(`[Cancel] ${logMessage}`);
+                        }
+                        break;
+                    }
+
+                    default:
+                        logMessage = `Неизвестный тип наказания: ${punishmentType}`;
+                        console.log(`[Cancel] ${logMessage}`);
+                }
+
+                // Если успешно — сохраняем логи чата
+                if (success) {
+                    saveLogs(chatId, logs);
+                    processedCancellations.add(key);
+                    modified = true;
+                    
+                    // Отправляем уведомление в чат
+                    try {
+                        const member = await bot.getChatMember(chatId, userId);
+                        const userName = member.user.first_name || 'Пользователь';
+                        const mention = `<a href="tg://user?id=${userId}">${userName}</a>`;
+                        const typeLabels = {
+                            mutes: 'мут',
+                            bans: 'бан',
+                            warns: 'предупреждение',
+                            notes: 'заметку'
+                        };
+                        const typeLabel = typeLabels[punishmentType] || punishmentType;
+                        
+                        
+                    } catch (e) {
+                        console.log(`[Cancel] Не удалось отправить уведомление в чат ${chatId}:`, e.message);
+                    }
+                    
+                    console.log(`[Cancel] ${logMessage}`);
+                }
+
+            } catch (e) {
+                console.error(`[Cancel] Ошибка обработки записи:`, e);
+                // Если ошибка, пропускаем этот элемент, но не добавляем в processed
+                // чтобы можно было повторить позже
+                remaining.push(item);
+            }
+        }
+
+        // Если были изменения, перезаписываем файл, удаляя обработанные записи
+        if (modified) {
+            // Оставляем только те записи, которые ещё не обработаны
+            const newPending = cancelData.pending.filter(item => {
+                const key = `${item.chatId}_${item.userId}_${item.punishmentType}_${item.index}`;
+                return !processedCancellations.has(key);
+            });
+
+            if (newPending.length === 0) {
+                // Если все обработаны — удаляем файл
+                fs.unlinkSync(CANCEL_FILE);
+                console.log('[Cancel] Файл отмен очищен (все наказания обработаны)');
+            } else {
+                // Иначе сохраняем оставшиеся
+                fs.writeFileSync(CANCEL_FILE, JSON.stringify({ pending: newPending }, null, 2), 'utf8');
+                console.log(`[Cancel] Осталось ${newPending.length} наказаний на отмену`);
+            }
+        }
+
+    } catch (e) {
+        console.error('[Cancel] Ошибка обработки отмен:', e);
+    }
+}
+
+setInterval(processCancellations, 10 * 1000);
+
 bot.on('callback_query', async (query) => {
     const chatId = query.message.chat.id;
     const userId = query.from.id;
