@@ -12,6 +12,10 @@ const CHAT_LOG_DIR = path.join(__dirname, 'chat_logs');
 const USER_LOG_DIR = path.join(__dirname, 'user_logs');
 const CANCEL_FILE = '/root/atri/punishmentsToCancel.json';
 const processedCancellations = new Set();
+const MESSAGE_STATS_DIR = '/root/atri/message_stats';
+const MESSAGE_STATS_FILE = path.join(MESSAGE_STATS_DIR, 'messages.json');
+
+if (!fs.existsSync(MESSAGE_STATS_DIR)) fs.mkdirSync(MESSAGE_STATS_DIR);
 
 if (!fs.existsSync(CHAT_LOG_DIR)) fs.mkdirSync(CHAT_LOG_DIR);
 if (!fs.existsSync(USER_LOG_DIR)) fs.mkdirSync(USER_LOG_DIR);
@@ -5056,3 +5060,146 @@ async function processAutoMessages() {
 }
 
 setInterval(processAutoMessages, 30 * 1000);
+
+
+
+async function saveMessageStats(chatId, userId, date = new Date()) {
+  try {
+    let stats = {};
+    if (fs.existsSync(MESSAGE_STATS_FILE)) {
+      const raw = fs.readFileSync(MESSAGE_STATS_FILE, 'utf8');
+      stats = JSON.parse(raw);
+    }
+    
+    const dateKey = date.toISOString().slice(0, 10); // YYYY-MM-DD
+    const hourKey = date.getHours();
+    const chatKey = String(chatId);
+    
+    if (!stats[chatKey]) {
+      stats[chatKey] = {
+        total: 0,
+        days: {},
+        hours: {},
+        users: {}
+      };
+    }
+    
+    // Общая статистика
+    stats[chatKey].total = (stats[chatKey].total || 0) + 1;
+    
+    // Статистика по дням
+    if (!stats[chatKey].days[dateKey]) {
+      stats[chatKey].days[dateKey] = 0;
+    }
+    stats[chatKey].days[dateKey]++;
+    
+    // Статистика по часам
+    if (!stats[chatKey].hours[hourKey]) {
+      stats[chatKey].hours[hourKey] = 0;
+    }
+    stats[chatKey].hours[hourKey]++;
+    
+    // Статистика по пользователям
+    if (!stats[chatKey].users[userId]) {
+      stats[chatKey].users[userId] = 0;
+    }
+    stats[chatKey].users[userId]++;
+    
+    // Очищаем старые данные (старше 30 дней)
+    const thirtyDaysAgo = new Date();
+    thirtyDaysAgo.setDate(thirtyDaysAgo.getDate() - 30);
+    const thirtyDaysAgoKey = thirtyDaysAgo.toISOString().slice(0, 10);
+    
+    for (const dayKey of Object.keys(stats[chatKey].days)) {
+      if (dayKey < thirtyDaysAgoKey) {
+        delete stats[chatKey].days[dayKey];
+      }
+    }
+    
+    fs.writeFileSync(MESSAGE_STATS_FILE, JSON.stringify(stats, null, 2), 'utf8');
+  } catch (e) {
+    console.error('Ошибка сохранения статистики сообщений:', e);
+  }
+}
+
+// Функция для получения статистики сообщений
+function getMessageStats(chatId, from, to) {
+  try {
+    if (!fs.existsSync(MESSAGE_STATS_FILE)) {
+      return { days: [], hours: [], users: [], total: 0 };
+    }
+    
+    const raw = fs.readFileSync(MESSAGE_STATS_FILE, 'utf8');
+    const allStats = JSON.parse(raw);
+    const chatStats = allStats[String(chatId)];
+    
+    if (!chatStats) {
+      return { days: [], hours: [], users: [], total: 0 };
+    }
+    
+    const fromDate = from ? new Date(from) : null;
+    const toDate = to ? new Date(to) : null;
+    
+    // Фильтруем дни
+    let days = Object.entries(chatStats.days || {})
+      .filter(([date]) => {
+        const d = new Date(date);
+        if (fromDate && d < fromDate) return false;
+        if (toDate && d > toDate) return false;
+        return true;
+      })
+      .map(([date, count]) => ({ date, count }))
+      .sort((a, b) => a.date.localeCompare(b.date));
+    
+    // Часы
+    const hours = Object.entries(chatStats.hours || {})
+      .map(([hour, count]) => ({ hour: parseInt(hour), count }))
+      .sort((a, b) => a.hour - b.hour);
+    
+    // Пользователи
+    const users = Object.entries(chatStats.users || {})
+      .map(([userId, count]) => ({ userId: parseInt(userId), count }))
+      .sort((a, b) => b.count - a.count)
+      .slice(0, 20);
+    
+    return {
+      days,
+      hours,
+      users,
+      total: chatStats.total || 0
+    };
+  } catch (e) {
+    console.error('Ошибка получения статистики сообщений:', e);
+    return { days: [], hours: [], users: [], total: 0 };
+  }
+}
+
+
+
+bot.on('message', async (msg) => {
+  // === СОХРАНЕНИЕ СТАТИСТИКИ СООБЩЕНИЙ ===
+  try {
+    const chatId = msg.chat.id;
+    const userId = msg.from.id;
+    
+    // Сохраняем только для групп и супергрупп
+    if (msg.chat.type === 'group' || msg.chat.type === 'supergroup') {
+      // Пропускаем служебные сообщения
+      const serviceFields = [
+        'left_chat_member', 'new_chat_title', 'new_chat_photo',
+        'delete_chat_photo', 'group_chat_created', 'supergroup_chat_created',
+        'channel_chat_created', 'pinned_message'
+      ];
+      if (!serviceFields.some(field => msg[field] !== undefined)) {
+        await saveMessageStats(chatId, userId);
+      }
+    }
+  } catch (e) {
+    // Не критично, просто логируем
+  }
+  
+  // === СУЩЕСТВУЮЩАЯ ЛОГИКА (обработка тикетов и т.д.) ===
+  // ... ваш существующий код
+});
+
+
