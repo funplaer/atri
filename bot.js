@@ -4,6 +4,7 @@ const path = require('path');
 const { send } = require('process');
 
 
+
 const token = '8661483092:AAEODdmrRjZfN4KfIDuzO0QbWiYqjRMVMLk'; 
 const bot = new TelegramBot(token, { polling: true });
 
@@ -133,6 +134,14 @@ const SETTINGS_NAMES = {
     autoMessageText: {
         name: 'Текст авто-сообщений',
         description: 'Текст сообщений для автоматической отправки. Можно указать несколько сообщений, разделяя их строкой ~*~ (до 6 штук, каждое до 700 символов). При нескольких сообщениях они будут отправляться по очереди с каждым интервалом.'
+    },    
+    forbiddenWordsEnabled: {
+        name: 'Обнаружение запрещённых слов',
+        description: 'Включить автоматическое обнаружение запрещённых слов в сообщениях. При обнаружении будет отправлен репорт в чат модерации.'
+    },
+    forbiddenWordsList: {
+        name: 'Список запрещённых слов',
+        description: 'Список слов через запятую. Например: дурак, идиот. Бот будет проверять все формы слов и способы обхода через спецсимволы, не надо добавлять разные формы одного слова.'
     }
 };
 
@@ -381,7 +390,9 @@ const defaultSettings = {
     captchaKickEnabled: false,
     autoMessageEnabled: false,
     autoMessageInterval: '1h',
-    autoMessageText: 'Это автоматическое сообщение от бота!'
+    autoMessageText: 'Это автоматическое сообщение от бота!',
+    forbiddenWordsEnabled: false,
+    forbiddenWordsList: 'слово1, слово2'
 };
 const pendingDeletions = new Map(); 
 
@@ -933,6 +944,190 @@ function markReportAsChecked(chatId, messageId, adminId) {
 
     return true;
 }
+
+// bot.js — добавьте после функции getUserFromEntities
+
+// === ОБНАРУЖЕНИЕ ЗАПРЕЩЁННЫХ СЛОВ ===
+
+// Функция для нормализации текста (удаление спецсимволов, приведение к одному регистру)
+function normalizeText(text) {
+    if (!text) return '';
+    
+    // Приводим к нижнему регистру
+    let normalized = text.toLowerCase();
+    
+    // Заменяем распространённые замены букв
+    const replacements = {
+        'а': '[аa@4]',
+        'б': '[бb6]',
+        'в': '[вb]',
+        'г': '[гg]',
+        'д': '[дd]',
+        'е': '[еe3]',
+        'ё': '[ёe]',
+        'ж': '[ж]',
+        'з': '[зz3]',
+        'и': '[иi]',
+        'й': '[йi]',
+        'к': '[кk]',
+        'л': '[лl]',
+        'м': '[мm]',
+        'н': '[нn]',
+        'о': '[оo0]',
+        'п': '[пp]',
+        'р': '[рr]',
+        'с': '[сc5]',
+        'т': '[тt]',
+        'у': '[уy]',
+        'ф': '[фf]',
+        'х': '[хx]',
+        'ц': '[цc]',
+        'ч': '[ч]',
+        'ш': '[ш]',
+        'щ': '[щ]',
+        'ъ': '[ъ]',
+        'ы': '[ы]',
+        'ь': '[ь]',
+        'э': '[эe]',
+        'ю': '[юy]',
+        'я': '[я]'
+    };
+    
+    // Заменяем буквы на их возможные вариации
+    let result = normalized;
+    for (const [key, value] of Object.entries(replacements)) {
+        result = result.replace(new RegExp(key, 'g'), value);
+    }
+    
+    return result;
+}
+
+// Функция для проверки слова на соответствие шаблону
+function matchesForbiddenWord(word, forbiddenWord) {
+    if (!word || !forbiddenWord) return false;
+    
+    const normalizedWord = normalizeText(word);
+    const normalizedForbidden = normalizeText(forbiddenWord);
+    
+    // Проверяем, содержит ли слово запрещённое слово (с учётом окончаний)
+    const patterns = [
+        // Точное совпадение
+        new RegExp(`^${normalizedForbidden}$`),
+        // Слово может иметь окончания
+        new RegExp(`^${normalizedForbidden}[а-яa-z]*$`),
+        // Запрещённое слово может быть частью слова
+        new RegExp(`${normalizedForbidden}`)
+    ];
+    
+    // Проверяем все варианты написания с учётом замен
+    const variations = generateVariations(normalizedForbidden);
+    for (const variation of variations) {
+        if (normalizedWord.includes(variation)) {
+            return true;
+        }
+    }
+    
+    return false;
+}
+
+// Функция для генерации вариаций слова (учёт разных замен)
+function generateVariations(word) {
+    const variations = new Set();
+    variations.add(word);
+    
+    // Если слово уже содержит замены, пробуем варианты
+    const chars = word.split('');
+    const possibleChars = [];
+    
+    for (const char of chars) {
+        const alternatives = getAlternatives(char);
+        if (alternatives.length > 1) {
+            possibleChars.push(alternatives);
+        } else {
+            possibleChars.push([char]);
+        }
+    }
+    
+    // Генерируем комбинации
+    function generateCombinations(index, current) {
+        if (index === possibleChars.length) {
+            variations.add(current);
+            return;
+        }
+        for (const alt of possibleChars[index]) {
+            generateCombinations(index + 1, current + alt);
+        }
+    }
+    
+    if (possibleChars.some(arr => arr.length > 1)) {
+        generateCombinations(0, '');
+    }
+    
+    return Array.from(variations);
+}
+
+// Функция для получения альтернатив для символа
+function getAlternatives(char) {
+    const alternatives = {
+        'а': ['а', 'a', '@', '4'],
+        'б': ['б', 'b', '6'],
+        'в': ['в', 'b'],
+        'г': ['г', 'g'],
+        'д': ['д', 'd'],
+        'е': ['е', 'e', '3'],
+        'ё': ['ё', 'e'],
+        'з': ['з', 'z', '3'],
+        'и': ['и', 'i'],
+        'к': ['к', 'k'],
+        'л': ['л', 'l'],
+        'м': ['м', 'm'],
+        'н': ['н', 'n'],
+        'о': ['о', 'o', '0'],
+        'п': ['п', 'p'],
+        'р': ['р', 'r'],
+        'с': ['с', 'c', '5'],
+        'т': ['т', 't'],
+        'у': ['у', 'y'],
+        'ф': ['ф', 'f'],
+        'х': ['х', 'x'],
+        'ц': ['ц', 'c'],
+        'ы': ['ы', 'y'],
+        'э': ['э', 'e'],
+        'ю': ['ю', 'y']
+    };
+    return alternatives[char] || [char];
+}
+
+// Функция для проверки текста на наличие запрещённых слов
+function checkForbiddenWords(text, forbiddenWordsList) {
+    if (!text || !forbiddenWordsList) return null;
+    
+    const words = forbiddenWordsList.split(',').map(w => w.trim().toLowerCase()).filter(w => w.length > 0);
+    if (words.length === 0) return null;
+    
+    // Разбиваем текст на слова
+    const textWords = text.split(/\s+/);
+    
+    for (const textWord of textWords) {
+        // Удаляем пунктуацию
+        const cleanWord = textWord.replace(/[^a-zA-Zа-яА-Я0-9@#]/g, '');
+        if (!cleanWord) continue;
+        
+        for (const forbiddenWord of words) {
+            if (matchesForbiddenWord(cleanWord, forbiddenWord)) {
+                return {
+                    foundWord: forbiddenWord,
+                    matchedWord: textWord,
+                    fullText: text
+                };
+            }
+        }
+    }
+    
+    return null;
+}
+
+
 async function executeQuickAction(query, action, chatId, messageId, report) {
     const adminId = query.from.id;
     const offenderId = report.offenderId;
@@ -4146,6 +4341,205 @@ bot.on('callback_query', async (query) => {
         return;
     }
 
+    if (data.startsWith('forbidden_')) {
+    const parts = data.split('_');
+    const action = parts[1];
+    const chatId = parseInt(parts[2]);
+    const messageId = parseInt(parts[3]);
+    
+    const isAdmin = (await bot.getChatAdministrators(chatId)).some(a => a.user.id === userId);
+    if (!isAdmin) {
+        return bot.answerCallbackQuery(query.id, { text: 'Только модераторы могут это делать', show_alert: true });
+    }
+    
+    // Получаем информацию о репорте
+    const report = reportStates[query.message.message_id];
+    if (!report || report.type !== 'forbidden') {
+        return bot.answerCallbackQuery(query.id, { text: 'Репорт не найден или уже обработан', show_alert: true });
+    }
+    
+    if (action === 'delete') {
+        // Удаляем сообщение нарушителя
+        try {
+            await bot.deleteMessage(chatId, messageId);
+        } catch (e) {
+            console.error('Ошибка удаления сообщения:', e);
+        }
+        
+        // Отмечаем репорт как обработанный
+        delete reportStates[query.message.message_id];
+        
+        // Редактируем сообщение репорта
+        const oldText = query.message.text;
+        const newText = `ЗАПРЕЩЁННОЕ СЛОВО ОБРАБОТАНО (сообщение удалено)\n\n` + oldText;
+        await bot.editMessageText(newText, {
+            chat_id: query.message.chat.id,
+            message_id: query.message.message_id,
+            parse_mode: 'HTML',
+            disable_web_page_preview: true,
+            reply_markup: {}
+        });
+        
+        return bot.answerCallbackQuery(query.id, { text: 'Сообщение удалено' });
+    }
+    
+    if (action === 'warn' || action === 'mute' || action === 'ban') {
+        // Используем существующую логику из executeQuickAction
+        const offenderId = report.userId;
+        const settings = getChatSettings(chatId);
+        let punishmentText = '';
+        
+        try {
+            if (action === 'warn') {
+                const warnEntry = {
+                    active: true,
+                    permanent: false,
+                    issuedAt: new Date().toISOString(),
+                    messageText: null,
+                    messageId: messageId,
+                    reason: 'Запрещённое слово (автоматическое обнаружение)',
+                    adminId: userId,
+                    removedAt: null,
+                    removedBy: null
+                };
+                const logs = loadLogs(chatId);
+                const user = getUser(logs, offenderId);
+                user.totalPunishments++;
+                user.warns.push(warnEntry);
+                saveLogs(chatId, logs);
+                
+                const ulogs = loadUserLogs(offenderId);
+                const u = getUserGlobal(ulogs, offenderId);
+                u.totalPunishments++;
+                u.warns.push({ ...warnEntry, chatId: chatId });
+                saveUserLogs(offenderId, ulogs);
+                
+                await checkWarnPunishment(chatId, offenderId);
+                punishmentText = 'предупреждение';
+            } else if (action === 'mute') {
+                const duration = ParseDuration(settings.quickMuteDuration);
+                if (!duration) throw new Error('Неверная длительность мута');
+                const untilDate = Math.floor(Date.now() / 1000) + duration;
+                await bot.restrictChatMember(chatId, offenderId, {
+                    permissions: {
+                        can_send_messages: false,
+                        can_send_media_messages: false,
+                        can_send_polls: false,
+                        can_send_other_messages: false,
+                        can_add_web_page_previews: false,
+                    },
+                    until_date: untilDate
+                });
+                
+                const muteEntry = {
+                    active: true,
+                    issuedAt: new Date().toISOString(),
+                    messageText: null,
+                    messageId: messageId,
+                    reason: 'Запрещённое слово (автоматическое обнаружение)',
+                    adminId: userId,
+                    expiresAt: new Date(Date.now() + duration * 1000).toISOString(),
+                    removedAt: null,
+                    removedBy: null
+                };
+                const logs = loadLogs(chatId);
+                const user = getUser(logs, offenderId);
+                user.totalPunishments++;
+                user.mutes.push(muteEntry);
+                saveLogs(chatId, logs);
+                
+                const ulogs = loadUserLogs(offenderId);
+                const u = getUserGlobal(ulogs, offenderId);
+                u.totalPunishments++;
+                u.mutes.push({ ...muteEntry, chatId: chatId });
+                saveUserLogs(offenderId, ulogs);
+                
+                punishmentText = `мут на ${settings.quickMuteDuration}`;
+            } else if (action === 'ban') {
+                await bot.banChatMember(chatId, offenderId);
+                
+                const banEntry = {
+                    active: true,
+                    issuedAt: new Date().toISOString(),
+                    messageText: null,
+                    messageId: messageId,
+                    reason: 'Запрещённое слово (автоматическое обнаружение)',
+                    adminId: userId,
+                    expiresAt: null,
+                    removedAt: null,
+                    removedBy: null
+                };
+                const logs = loadLogs(chatId);
+                const user = getUser(logs, offenderId);
+                user.totalPunishments++;
+                user.bans.push(banEntry);
+                saveLogs(chatId, logs);
+                
+                const ulogs = loadUserLogs(offenderId);
+                const u = getUserGlobal(ulogs, offenderId);
+                u.totalPunishments++;
+                u.bans.push({ ...banEntry, chatId: chatId });
+                saveUserLogs(offenderId, ulogs);
+                
+                punishmentText = 'бан';
+            }
+            
+            // Удаляем сообщение нарушителя
+            try {
+                await bot.deleteMessage(chatId, messageId);
+            } catch (e) {}
+            
+            // Отмечаем репорт как обработанный
+            delete reportStates[query.message.message_id];
+            
+            // Редактируем сообщение репорта
+            const oldText = query.message.text;
+            const newText = `ЗАПРЕЩЁННОЕ СЛОВО ОБРАБОТАНО (наказание: ${punishmentText})\n\n` + oldText;
+            await bot.editMessageText(newText, {
+                chat_id: query.message.chat.id,
+                message_id: query.message.message_id,
+                parse_mode: 'HTML',
+                disable_web_page_preview: true,
+                reply_markup: {}
+            });
+            
+            return bot.answerCallbackQuery(query.id, { text: `Выполнено: ${punishmentText}` });
+            
+        } catch (e) {
+            console.error('Ошибка применения наказания:', e);
+            return bot.answerCallbackQuery(query.id, { text: 'Ошибка при выполнении действия', show_alert: true });
+        }
+    }
+    
+    if (action === 'reject') {
+        delete reportStates[query.message.message_id];
+        const oldText = query.message.text;
+        const newText = ` ЗАПРЕЩЁННОЕ СЛОВО ОТКЛОНЕНО\n\n` + oldText;
+        await bot.editMessageText(newText, {
+            chat_id: query.message.chat.id,
+            message_id: query.message.message_id,
+            parse_mode: 'HTML',
+            disable_web_page_preview: true,
+            reply_markup: {}
+        });
+        return bot.answerCallbackQuery(query.id, { text: 'Репорт отклонён' });
+    }
+    
+    if (action === 'done') {
+        delete reportStates[query.message.message_id];
+        const oldText = query.message.text;
+        const newText = ` ЗАПРЕЩЁННОЕ СЛОВО ПРОВЕРЕНО (без наказания)\n\n` + oldText;
+        await bot.editMessageText(newText, {
+            chat_id: query.message.chat.id,
+            message_id: query.message.message_id,
+            parse_mode: 'HTML',
+            disable_web_page_preview: true,
+            reply_markup: {}
+        });
+        return bot.answerCallbackQuery(query.id, { text: 'Репорт отмечен как проверенный' });
+    }
+}
+
     if (data.startsWith('settings_')) {
         try {
             const admins = await bot.getChatAdministrators(chatId);
@@ -4515,6 +4909,10 @@ bot.on('callback_query', async (query) => {
             bot.answerCallbackQuery(query.id);
             return;
         }
+
+        // bot.js — добавьте в начало обработчика callback_query, после проверки captcha_
+
+
 
     } catch (e) {
         console.error('Ticket callback error:', e);
@@ -5243,3 +5641,139 @@ setTimeout(async () => {
     console.log('[Cache] Первоначальная загрузка кеша настроек...');
     await refreshSettingsCache();
 }, 3000);
+
+
+
+// bot.js — добавьте в обработчик bot.on('message') после сохранения статистики
+
+
+// bot.js — найдите этот обработчик в конце файла
+// bot.js — добавьте в обработчик bot.on('message') после сохранения статистики
+
+bot.on('message', async (msg) => {
+  // === СОХРАНЕНИЕ СТАТИСТИКИ СООБЩЕНИЙ ===
+  try {
+    const chatId = msg.chat.id;
+    const userId = msg.from.id;
+    
+    if (msg.chat.type === 'group' || msg.chat.type === 'supergroup') {
+      const serviceFields = [
+        'left_chat_member', 'new_chat_title', 'new_chat_photo',
+        'delete_chat_photo', 'group_chat_created', 'supergroup_chat_created',
+        'channel_chat_created', 'pinned_message'
+      ];
+      if (!serviceFields.some(field => msg[field] !== undefined)) {
+        await saveMessageStats(chatId, userId);
+        
+        // === ПРОВЕРКА НА ЗАПРЕЩЁННЫЕ СЛОВА ===
+        await checkForbiddenWordsInMessage(msg);
+      }
+    }
+  } catch (e) {
+    // Не критично
+  }
+  
+  // === СУЩЕСТВУЮЩАЯ ЛОГИКА (обработка тикетов и т.д.) ===
+  // ... ваш существующий код
+});
+
+// Функция для проверки запрещённых слов в сообщении
+async function checkForbiddenWordsInMessage(msg) {
+    try {
+        const chatId = msg.chat.id;
+        const settings = getChatSettings(chatId);
+        
+        // Проверяем, включена ли функция
+        if (!settings.forbiddenWordsEnabled) return;
+        
+        // Проверяем, есть ли текст в сообщении
+        const text = msg.text || msg.caption || '';
+        if (!text) return;
+        
+        // Проверяем, есть ли список запрещённых слов
+        if (!settings.forbiddenWordsList) return;
+        
+        // Проверяем, есть ли чат модерации
+        if (!settings.modchatID) return;
+        
+        // Проверяем, не является ли отправитель администратором
+        try {
+            const admins = await bot.getChatAdministrators(chatId);
+            const isAdmin = admins.some(a => a.user.id === msg.from.id);
+            if (isAdmin) return;
+        } catch (e) {
+            return;
+        }
+        
+        // Проверяем текст на запрещённые слова
+        const result = checkForbiddenWords(text, settings.forbiddenWordsList);
+        if (!result) return;
+        
+        // Формируем репорт
+        const reporter = bot.botInfo;
+        const offender = msg.from;
+        
+        let messageLink = 'Сообщение недоступно';
+        try {
+            if (String(chatId).startsWith('-100')) {
+                const internalId = String(chatId).replace('-100', '');
+                messageLink = `https://t.me/c/${internalId}/${msg.message_id}`;
+            }
+        } catch {}
+        
+        const reportText = 
+            `<b>• Обнаружено запрещённое слово</b>\n\n` +
+            `<b>• Обнаружил бот</b>\n` +
+            `<b>• На пользователя:</b>\n` +
+            `<a href="tg://user?id=${offender.id}">${offender.first_name}</a>\n` +
+            `ID: <code>${offender.id}</code>\n\n` +
+            `<b>• Запрещённое слово:</b>\n${result.foundWord}\n\n` +
+            `<b>• Слово в сообщении:</b>\n${result.matchedWord}\n\n` +
+            `<b>• Полный текст:</b>\n${text.substring(0, 500)}${text.length > 500 ? '...' : ''}\n\n` +
+            `<b>• Ссылка на сообщение:</b>\n<a href="${messageLink}">Перейти к сообщению</a>`;
+        
+        const keyboard = {
+            inline_keyboard: [
+                [
+                    { text: 'Удалить сообщение', callback_data: `forbidden_delete_${chatId}_${msg.message_id}` },
+                    { text: 'Предупреждение', callback_data: `forbidden_warn_${chatId}_${msg.message_id}` }
+                ],
+                [
+                    { text: `Мут ${settings.quickMuteDuration}`, callback_data: `forbidden_mute_${chatId}_${msg.message_id}` },
+                    { text: 'Бан', callback_data: `forbidden_ban_${chatId}_${msg.message_id}` }
+                ],
+                [
+                    { text: 'Отклонить', callback_data: `forbidden_reject_${chatId}_${msg.message_id}` },
+                    { text: 'Отметить как проверенный', callback_data: `forbidden_done_${chatId}_${msg.message_id}` }
+                ]
+            ]
+        };
+        
+        const sent = await bot.sendMessage(
+            settings.modchatID,
+            reportText,
+            {
+                parse_mode: 'HTML',
+                disable_web_page_preview: true,
+                reply_markup: keyboard
+            }
+        );
+        
+        // Сохраняем состояние репорта
+        const reportId = sent.message_id;
+        reportStates[reportId] = {
+            type: 'forbidden',
+            chatId: chatId,
+            messageId: msg.message_id,
+            userId: offender.id,
+            timer: null,
+            pendingAction: null,
+            lastPress: null
+        };
+        
+        console.log(`[Forbidden] Обнаружено запрещённое слово "${result.foundWord}" от пользователя ${offender.id} в чате ${chatId}`);
+        
+    } catch (e) {
+        console.error('Ошибка проверки запрещённых слов:', e);
+    }
+}
