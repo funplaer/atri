@@ -1105,19 +1105,21 @@ function checkForbiddenWords(text, forbiddenWordsList) {
     const words = forbiddenWordsList.split(',').map(w => w.trim().toLowerCase()).filter(w => w.length > 0);
     if (words.length === 0) return null;
     
-    // Разбиваем текст на слова
+    // Разбиваем текст на слова (учитывая пунктуацию)
     const textWords = text.split(/\s+/);
     
-    for (const textWord of textWords) {
-        // Удаляем пунктуацию
-        const cleanWord = textWord.replace(/[^a-zA-Zа-яА-Я0-9@#]/g, '');
-        if (!cleanWord) continue;
-        
-        for (const forbiddenWord of words) {
-            if (matchesForbiddenWord(cleanWord, forbiddenWord)) {
+    for (const forbiddenWord of words) {
+        for (const word of textWords) {
+            // Очищаем слово от пунктуации для сравнения
+            const cleanWord = cleanText(word);
+            if (!cleanWord) continue;
+            
+            // Проверяем точное совпадение или совпадение с окончаниями
+            // но только если запрещённое слово является отдельным словом или корнем с окончанием
+            if (isForbiddenWordMatch(cleanWord, forbiddenWord)) {
                 return {
                     foundWord: forbiddenWord,
-                    matchedWord: textWord,
+                    matchedWord: word,
                     fullText: text
                 };
             }
@@ -1125,6 +1127,47 @@ function checkForbiddenWords(text, forbiddenWordsList) {
     }
     
     return null;
+}
+
+// Функция для проверки соответствия слова запрещённому слову
+function isForbiddenWordMatch(word, forbiddenWord) {
+    if (!word || !forbiddenWord) return false;
+    
+    // Точное совпадение
+    if (word === forbiddenWord) return true;
+    
+    // Проверяем, является ли слово формой запрещённого слова
+    // Например: "жиды" -> "жид", "жидовский" -> "жид"
+    // Но не "неожиданно" -> "жид"
+    
+    // Если запрещённое слово короче 3 букв, требуем точного совпадения или 
+    // чтобы слово начиналось с запрещённого и заканчивалось на типичное окончание
+    if (forbiddenWord.length <= 3) {
+        // Для коротких слов (3 буквы и меньше) — только точное совпадение
+        // или слово из 4-5 букв, которое начинается с запрещённого и имеет типичное окончание
+        const typicalEndings = ['ы', 'а', 'ов', 'ев', 'ский', 'ская', 'ское', 'ие', 'ий', 'ой', 'ом', 'е'];
+        for (const ending of typicalEndings) {
+            if (word === forbiddenWord + ending) return true;
+        }
+        return false;
+    }
+    
+    // Для длинных слов — проверяем, является ли запрещённое слово корнем
+    // Но только если слово начинается с запрещённого и разница в длине не более 4 символов
+    if (word.startsWith(forbiddenWord)) {
+        const diff = word.length - forbiddenWord.length;
+        // Разрешаем только типичные окончания (не более 4 символов)
+        if (diff > 0 && diff <= 4) {
+            const ending = word.slice(forbiddenWord.length);
+            const typicalEndings = ['ы', 'а', 'ов', 'ев', 'ский', 'ская', 'ское', 'ие', 'ий', 'ой', 'ом', 'е', 'ам', 'ами', 'ах'];
+            for (const typical of typicalEndings) {
+                if (ending === typical) return true;
+            }
+        }
+        return false;
+    }
+    
+    return false;
 }
 
 
@@ -5777,3 +5820,7 @@ async function checkForbiddenWordsInMessage(msg) {
         console.error('Ошибка проверки запрещённых слов:', e);
     }
 }
+
+
+// bot.js — замените функцию checkForbiddenWords
+
