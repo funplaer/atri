@@ -5,7 +5,7 @@ const { send } = require('process');
 
 
 
-const token = '8661483092:AAEODdmrRjZfN4KfIDuzO0QbWiYqjRMVMLk'; 
+const token = '8661483092:AAFIIg3RAirpdUYn9iTMB3rhkRYNZ69BmeA'; 
 const bot = new TelegramBot(token, { polling: true });
 
 
