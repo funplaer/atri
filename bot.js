@@ -3273,33 +3273,18 @@ bot.on('message', async (msg) => {
 bot.on('message', async (msg) => {
     try {
         const serviceFields = [
-            'basic_group_chat_create',
-            'supergroup_chat_create',
-            'chat_change_title',
-            'chat_change_photo',
-            'chat_delete_photo',
-            'chat_add_members',
-            'chat_join_by_link',
-            'chat_join_by_request',
-            'chat_delete_member',
             'left_chat_member',
-            'chat_upgrade_to',
-            'chat_upgrade_from',
-            'pin_message',
-            'chat_set_theme',
-            'chat_set_ttl',
-            'chat_set_message_auto_delete_time',
-            'forum_topic_created',
-            'forum_topic_edited',
-            'forum_topic_is_closed_toggled',
-            'forum_topic_is_hidden_toggled',
-            'video_chat_scheduled',
+            'new_chat_title',
+            'new_chat_photo',
+            'delete_chat_photo',
+            'group_chat_created',
+            'supergroup_chat_created',
+            'channel_chat_created',
+            'pinned_message',
             'video_chat_started',
             'video_chat_ended',
-            'invite_video_chat_participants',
-            'new_chat_title',
-            'new_chat_members',
-            'new_chat_member'
+            'video_chat_participants_invited',
+            'video_chat_scheduled'
         ];
 
         if (serviceFields.some(field => msg[field] !== undefined)) {
