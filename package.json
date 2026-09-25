@@ -12,8 +12,8 @@
   "dependencies": {
     "fs": "^0.0.1-security",
     "node-telegram-bot-api": "^0.67.0",
-    "path": "^0.12.7",
-    "transliteration": "^2.6.1"
+    "path": "^0.12.7"
   },
+  "devDependencies": {},
   "description": ""
 }
